@@ -30,7 +30,7 @@ abstract class AbstractCompositeMeter<T extends Meter> extends AbstractMeter imp
 
     private final AtomicBoolean childrenGuard = new AtomicBoolean();
 
-    private Map<MeterRegistry, T> children = Collections.emptyMap();
+    private State state = new State(Collections.emptyMap());
 
     @Nullable
     private volatile T noopMeter;
@@ -45,14 +45,12 @@ abstract class AbstractCompositeMeter<T extends Meter> extends AbstractMeter imp
     abstract T registerNewMeter(MeterRegistry registry);
 
     final Iterable<T> getChildren() {
-        return children.values();
+        return state.children.values();
     }
 
     T firstChild() {
-        for (T next : children.values()) {
-            if (!(next instanceof NoopMeter)) {
-                return next;
-            }
+        if (state.firstNonNoopChild != null) {
+            return state.firstNonNoopChild;
         }
 
         // There are no child meters. Return a lazily instantiated no-op meter.
@@ -75,9 +73,9 @@ abstract class AbstractCompositeMeter<T extends Meter> extends AbstractMeter imp
         for (;;) {
             if (childrenGuard.compareAndSet(false, true)) {
                 try {
-                    Map<MeterRegistry, T> newChildren = new IdentityHashMap<>(children);
+                    Map<MeterRegistry, T> newChildren = new IdentityHashMap<>(state.children);
                     newChildren.put(registry, newMeter);
-                    this.children = newChildren;
+                    this.state = new State(newChildren);
                     break;
                 }
                 finally {
@@ -97,9 +95,9 @@ abstract class AbstractCompositeMeter<T extends Meter> extends AbstractMeter imp
         for (;;) {
             if (childrenGuard.compareAndSet(false, true)) {
                 try {
-                    Map<MeterRegistry, T> newChildren = new IdentityHashMap<>(children);
+                    Map<MeterRegistry, T> newChildren = new IdentityHashMap<>(state.children);
                     newChildren.remove(registry);
-                    this.children = newChildren;
+                    this.state = new State(newChildren);
                     break;
                 }
                 finally {
@@ -107,6 +105,24 @@ abstract class AbstractCompositeMeter<T extends Meter> extends AbstractMeter imp
                 }
             }
         }
+    }
+
+    private class State {
+
+        private final Map<MeterRegistry, T> children;
+
+        @Nullable
+        private final T firstNonNoopChild;
+
+        State(final Map<MeterRegistry, T> children) {
+            this.children = children;
+            firstNonNoopChild = children.values()
+                .stream()
+                .filter(child -> !(child instanceof NoopMeter))
+                .findFirst()
+                .orElse(null);
+        }
+
     }
 
 }
