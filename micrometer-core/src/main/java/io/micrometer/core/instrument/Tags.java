@@ -15,7 +15,7 @@
  */
 package io.micrometer.core.instrument;
 
-import io.micrometer.core.lang.Nullable;
+import io.micrometer.common.lang.Nullable;
 
 import java.util.*;
 import java.util.stream.Stream;
@@ -149,13 +149,18 @@ public final class Tags implements Iterable<Tag> {
 
     }
 
+    @Override
+    public Spliterator<Tag> spliterator() {
+        return Spliterators.spliterator(tags, 0, last, Spliterator.IMMUTABLE | Spliterator.ORDERED
+                | Spliterator.DISTINCT | Spliterator.NONNULL | Spliterator.SORTED);
+    }
+
     /**
      * Return a stream of the contained tags.
      * @return a tags stream
      */
     public Stream<Tag> stream() {
-        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator(),
-                Spliterator.ORDERED | Spliterator.DISTINCT | Spliterator.NONNULL | Spliterator.SORTED), false);
+        return StreamSupport.stream(spliterator(), false);
     }
 
     @Override
@@ -194,7 +199,7 @@ public final class Tags implements Iterable<Tag> {
      * @param otherTags the second set of tags, elements mustn't be null
      * @return the merged tags
      */
-    public static Tags concat(@Nullable Iterable<? extends Tag> tags, @Nullable Iterable<Tag> otherTags) {
+    public static Tags concat(@Nullable Iterable<? extends Tag> tags, @Nullable Iterable<? extends Tag> otherTags) {
         return Tags.of(tags).and(otherTags);
     }
 

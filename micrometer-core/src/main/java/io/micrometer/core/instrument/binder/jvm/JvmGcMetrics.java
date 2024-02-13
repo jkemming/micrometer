@@ -17,15 +17,15 @@ package io.micrometer.core.instrument.binder.jvm;
 
 import com.sun.management.GarbageCollectionNotificationInfo;
 import com.sun.management.GcInfo;
+import io.micrometer.common.lang.NonNullApi;
+import io.micrometer.common.lang.NonNullFields;
+import io.micrometer.common.lang.Nullable;
+import io.micrometer.common.util.internal.logging.InternalLogger;
+import io.micrometer.common.util.internal.logging.InternalLoggerFactory;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.*;
 import io.micrometer.core.instrument.binder.BaseUnits;
 import io.micrometer.core.instrument.binder.MeterBinder;
-import io.micrometer.core.lang.NonNullApi;
-import io.micrometer.core.lang.NonNullFields;
-import io.micrometer.core.lang.Nullable;
-import io.micrometer.core.util.internal.logging.InternalLogger;
-import io.micrometer.core.util.internal.logging.InternalLoggerFactory;
 
 import javax.management.ListenerNotFoundException;
 import javax.management.Notification;
@@ -49,11 +49,21 @@ import static java.util.Collections.emptyList;
  * emanating from the MXBean and also adds information about GC causes.
  * <p>
  * This provides metrics for OpenJDK garbage collectors (serial, parallel, G1, Shenandoah,
- * ZGC) and for OpenJ9 garbage collectors (gencon, balanced, opthruput, optavgpause,
- * metronome).
+ * ZGC), OpenJ9 garbage collectors (gencon, balanced, opthruput, optavgpause, metronome)
+ * and for Azul Prime's (formerly Zing) C4 GC (formerly GPGC).
+ * <p>
+ * WARNING: Older versions of Azul Prime (Zing) did not report timing information about
+ * pauses and cycles correctly (duration of GC pauses and duration of the concurrent part
+ * of the GC which runs in parallel to application threads and is not stopping the
+ * application). See the
+ * <a href="https://docs.azul.com/prime/release-notes#prime_stream_22_12_0_0">release
+ * notes</a> and <a href="https://bugs.openjdk.org/browse/JDK-8265136">JDK-8265136</a>. If
+ * you want better accuracy, please make sure that you use a newer version and the new
+ * metrics are enabled.
  *
  * @author Jon Schneider
  * @author Tommy Ludwig
+ * @author Andrew Krasny
  * @see GarbageCollectorMXBean
  */
 @NonNullApi
@@ -180,22 +190,23 @@ public class JvmGcMetrics implements MeterBinder, AutoCloseable {
             CompositeData cd = (CompositeData) notification.getUserData();
             GarbageCollectionNotificationInfo notificationInfo = GarbageCollectionNotificationInfo.from(cd);
 
+            String gcName = notificationInfo.getGcName();
             String gcCause = notificationInfo.getGcCause();
             String gcAction = notificationInfo.getGcAction();
             GcInfo gcInfo = notificationInfo.getGcInfo();
             long duration = gcInfo.getDuration();
-            if (isConcurrentPhase(gcCause, notificationInfo.getGcName())) {
+
+            Tags gcTags = Tags.of("gc", gcName, "action", gcAction, "cause", gcCause).and(tags);
+            if (isConcurrentPhase(gcCause, gcName)) {
                 Timer.builder("jvm.gc.concurrent.phase.time")
-                    .tags(tags)
-                    .tags("action", gcAction, "cause", gcCause)
+                    .tags(gcTags)
                     .description("Time spent in concurrent phase")
                     .register(registry)
                     .record(duration, TimeUnit.MILLISECONDS);
             }
             else {
                 Timer.builder("jvm.gc.pause")
-                    .tags(tags)
-                    .tags("action", gcAction, "cause", gcCause)
+                    .tags(gcTags)
                     .description("Time spent in GC pause")
                     .register(registry)
                     .record(duration, TimeUnit.MILLISECONDS);
@@ -218,11 +229,12 @@ public class JvmGcMetrics implements MeterBinder, AutoCloseable {
             }
 
             // Some GC implementations such as G1 can reduce the old gen size as part of a
-            // minor GC. To track the
-            // live data size we record the value if we see a reduction in the long-lived
-            // heap size or
-            // after a major/non-generational GC.
-            if (longLivedAfter < longLivedBefore || shouldUpdateDataSizeMetrics(notificationInfo.getGcName())) {
+            // minor GC. To track the live data size we record the value if we see a
+            // reduction in the long-lived heap size or after a major/non-generational GC.
+            // ZGC Warmup notifications should be ignored since the long-lived heap size
+            // is zero there.
+            if ((longLivedAfter < longLivedBefore || shouldUpdateDataSizeMetrics(gcName))
+                    && !isZgcWarmingUp(gcCause, longLivedAfter)) {
                 liveDataSize.set(longLivedAfter);
                 maxDataSize.set(longLivedPoolNames.stream().mapToLong(pool -> after.get(pool).getMax()).sum());
             }
@@ -239,6 +251,19 @@ public class JvmGcMetrics implements MeterBinder, AutoCloseable {
             if (delta > 0L) {
                 allocatedBytes.increment(delta);
             }
+        }
+
+        /**
+         * Sometimes ZGC emits "Warmup" notification, where longLivedAfter is 0, we should
+         * ignore those notifications, see: gh-4497. This method should detect these
+         * cases.
+         * @param gcCause The action performed by the garbage collector
+         * @param longLivedAfter Size of the long-lived pools after collection
+         * @return Whether the ZGC warmup notification is emitted with zero long-lived
+         * pools size
+         */
+        private boolean isZgcWarmingUp(String gcCause, long longLivedAfter) {
+            return longLivedAfter == 0 && "Warmup".equals(gcCause);
         }
 
         private boolean shouldUpdateDataSizeMetrics(String gcName) {
@@ -259,12 +284,25 @@ public class JvmGcMetrics implements MeterBinder, AutoCloseable {
     }
 
     private boolean isGenerationalGcConfigured() {
-        return ManagementFactory.getMemoryPoolMXBeans()
-            .stream()
-            .filter(JvmMemory::isHeap)
-            .map(MemoryPoolMXBean::getName)
-            .filter(name -> !name.contains("tenured"))
-            .count() > 1;
+        // Azul Prime's (formerly Zing) C4 GC (formerly GPGC) is always generational
+        // and having more than one non-'tenured' pools is also considered to be
+        // generational.
+        int nonTenuredPools = 0;
+        for (MemoryPoolMXBean bean : ManagementFactory.getMemoryPoolMXBeans()) {
+            if (JvmMemory.isHeap(bean)) {
+                String name = bean.getName();
+                if (!name.contains("tenured")) {
+                    nonTenuredPools++;
+                    if (nonTenuredPools == 2) {
+                        return true;
+                    }
+                }
+                if (name.contains("GPGC")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static boolean isManagementExtensionsPresent() {
@@ -316,6 +354,16 @@ public class JvmGcMetrics implements MeterBinder, AutoCloseable {
                 put("partial gc", YOUNG);
                 put("global garbage collect", OLD);
                 put("Epsilon", OLD);
+                // GPGC (Azul's C4, see:
+                // https://docs.azul.com/prime/release-notes#prime_stream_22_12_0_0)
+                put("GPGC New", YOUNG); // old naming
+                put("GPGC Old", OLD); // old naming
+                put("GPGC New Cycles", YOUNG); // new naming
+                put("GPGC Old Cycles", OLD); // new naming
+                put("GPGC New Pauses", YOUNG); // new naming
+                put("GPGC Old Pauses", OLD); // new naming
+                put("ZGC Major Cycles", OLD); // do not include 'ZGC Major Pauses'; see
+                                              // gh-2872
             }
         };
 

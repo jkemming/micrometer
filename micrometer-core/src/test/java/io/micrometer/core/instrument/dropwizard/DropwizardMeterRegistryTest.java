@@ -16,10 +16,10 @@
 package io.micrometer.core.instrument.dropwizard;
 
 import com.codahale.metrics.MetricRegistry;
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.Issue;
 import io.micrometer.core.instrument.*;
 import io.micrometer.core.instrument.util.HierarchicalNameMapper;
-import io.micrometer.core.lang.Nullable;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -109,6 +109,15 @@ class DropwizardMeterRegistryTest {
         assertThat(registry.getDropwizardRegistry().getMeters()).hasSize(1);
         registry.remove(counter);
         assertThat(registry.getDropwizardRegistry().getMeters()).isEmpty();
+    }
+
+    @Issue("#2924")
+    @Test
+    void removeShouldWorkForLongTaskTimer() {
+        LongTaskTimer timer = LongTaskTimer.builder("foo").register(registry);
+        assertThat(registry.getDropwizardRegistry().getGauges()).hasSize(3);
+        registry.remove(timer);
+        assertThat(registry.getDropwizardRegistry().getGauges()).isEmpty();
     }
 
 }

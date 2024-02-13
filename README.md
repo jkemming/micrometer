@@ -4,18 +4,20 @@
 [![Apache 2.0](https://img.shields.io/github/license/micrometer-metrics/micrometer.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Maven Central](https://img.shields.io/maven-central/v/io.micrometer/micrometer-core.svg)](https://search.maven.org/artifact/io.micrometer/micrometer-core)
 [![Javadocs](https://www.javadoc.io/badge/io.micrometer/micrometer-core.svg)](https://www.javadoc.io/doc/io.micrometer/micrometer-core)
-[![Revved up by Gradle Enterprise](https://img.shields.io/badge/Revved%20up%20by-Gradle%20Enterprise-06A0CE?logo=Gradle&labelColor=02303A)](https://ge.micrometer.io/)
+[![Revved up by Develocity](https://img.shields.io/badge/Revved%20up%20by-Develocity-06A0CE?logo=Gradle&labelColor=02303A)](https://ge.micrometer.io/)
 
 An application metrics facade for the most popular monitoring tools. Instrument your code with dimensional metrics with a
 vendor neutral interface and decide on the monitoring backend at the last minute.
 
 More info and the user manual are available on [micrometer.io](https://micrometer.io).
 
-Micrometer is the instrumentation library underpinning Spring Boot 2's metrics collection.
+Micrometer is the instrumentation library underpinning Spring Boot 2's or later metrics collection.
+
+Micrometer artifacts work with Java 8 or later. We're releasing a [multi-release JAR](https://docs.oracle.com/javase/9/docs/specs/jar/jar.html#multi-release-jar-files) with support for JDK-version specific features (e.g. JDK 11's `HttpClient` instrumentation).
 
 ## Supported versions
 
-See [Micrometer's support policy](https://micrometer.io/docs/support).
+See [Micrometer's support policy](https://micrometer.io/support/).
 
 ## Join the discussion
 

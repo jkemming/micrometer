@@ -15,9 +15,9 @@
  */
 package io.micrometer.core.instrument.binder.jersey.server;
 
+import io.micrometer.common.util.StringUtils;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.binder.http.Outcome;
-import io.micrometer.core.instrument.util.StringUtils;
 import org.glassfish.jersey.server.ContainerRequest;
 import org.glassfish.jersey.server.ContainerResponse;
 import org.glassfish.jersey.server.ExtendedUriInfo;
@@ -34,7 +34,9 @@ import java.util.regex.Pattern;
  * @author Michael Weirauch
  * @author Johnny Lim
  * @since 1.8.0
+ * @deprecated since 1.13.0 use the jersey-micrometer module in the Jersey project instead
  */
+@Deprecated
 public final class JerseyTags {
 
     private static final Tag URI_NOT_FOUND = Tag.of("uri", "NOT_FOUND");
@@ -49,9 +51,9 @@ public final class JerseyTags {
 
     private static final Tag METHOD_UNKNOWN = Tag.of("method", "UNKNOWN");
 
-    private static final Pattern TRAILING_SLASH_PATTERN = Pattern.compile("/$");
+    static final Pattern TRAILING_SLASH_PATTERN = Pattern.compile("/$");
 
-    private static final Pattern MULTIPLE_SLASH_PATTERN = Pattern.compile("//+");
+    static final Pattern MULTIPLE_SLASH_PATTERN = Pattern.compile("//+");
 
     private JerseyTags() {
     }
@@ -101,11 +103,11 @@ public final class JerseyTags {
         return Tag.of("uri", matchingPattern);
     }
 
-    private static boolean isRedirection(int status) {
+    static boolean isRedirection(int status) {
         return 300 <= status && status < 400;
     }
 
-    private static String getMatchingPattern(RequestEvent event) {
+    static String getMatchingPattern(RequestEvent event) {
         ExtendedUriInfo uriInfo = event.getUriInfo();
         List<UriTemplate> templates = uriInfo.getMatchedTemplates();
 
@@ -122,7 +124,7 @@ public final class JerseyTags {
     }
 
     /**
-     * Creates a {@code exception} tag based on the {@link Class#getSimpleName() simple
+     * Creates an {@code exception} tag based on the {@link Class#getSimpleName() simple
      * name} of the class of the given {@code exception}.
      * @param event the request event
      * @return the exception tag derived from the exception

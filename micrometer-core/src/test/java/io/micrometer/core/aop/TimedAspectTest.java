@@ -15,6 +15,9 @@
  */
 package io.micrometer.core.aop;
 
+import io.micrometer.common.annotation.ValueExpressionResolver;
+import io.micrometer.common.annotation.ValueResolver;
+import io.micrometer.common.lang.NonNull;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.LongTaskTimer;
 import io.micrometer.core.instrument.Meter.Id;
@@ -24,9 +27,10 @@ import io.micrometer.core.instrument.distribution.DistributionStatisticConfig;
 import io.micrometer.core.instrument.distribution.pause.PauseDetector;
 import io.micrometer.core.instrument.search.MeterNotFoundException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import io.micrometer.core.lang.NonNull;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
 
 import javax.annotation.Nonnull;
@@ -368,6 +372,168 @@ class TimedAspectTest {
                 .tag("extra", "tag")
                 .timer();
         });
+    }
+
+    static class MeterTagsTests {
+
+        ValueResolver valueResolver = parameter -> "Value from myCustomTagValueResolver [" + parameter + "]";
+
+        ValueExpressionResolver valueExpressionResolver = new SpelValueExpressionResolver();
+
+        MeterTagAnnotationHandler meterTagAnnotationHandler = new MeterTagAnnotationHandler(aClass -> valueResolver,
+                aClass -> valueExpressionResolver);
+
+        @ParameterizedTest
+        @EnumSource(AnnotatedTestClass.class)
+        void meterTagsWithText(AnnotatedTestClass annotatedClass) {
+            MeterRegistry registry = new SimpleMeterRegistry();
+            TimedAspect timedAspect = new TimedAspect(registry);
+            timedAspect.setMeterTagAnnotationHandler(meterTagAnnotationHandler);
+
+            AspectJProxyFactory pf = new AspectJProxyFactory(annotatedClass.newInstance());
+            pf.addAspect(timedAspect);
+
+            MeterTagClassInterface service = pf.getProxy();
+
+            service.getAnnotationForArgumentToString(15L);
+
+            assertThat(registry.get("method.timed").tag("test", "15").timer().count()).isEqualTo(1);
+        }
+
+        @ParameterizedTest
+        @EnumSource(AnnotatedTestClass.class)
+        void meterTagsWithResolver(AnnotatedTestClass annotatedClass) {
+            MeterRegistry registry = new SimpleMeterRegistry();
+            TimedAspect timedAspect = new TimedAspect(registry);
+            timedAspect.setMeterTagAnnotationHandler(meterTagAnnotationHandler);
+
+            AspectJProxyFactory pf = new AspectJProxyFactory(annotatedClass.newInstance());
+            pf.addAspect(timedAspect);
+
+            MeterTagClassInterface service = pf.getProxy();
+
+            service.getAnnotationForTagValueResolver("foo");
+
+            assertThat(registry.get("method.timed")
+                .tag("test", "Value from myCustomTagValueResolver [foo]")
+                .timer()
+                .count()).isEqualTo(1);
+        }
+
+        @ParameterizedTest
+        @EnumSource(AnnotatedTestClass.class)
+        void meterTagsWithExpression(AnnotatedTestClass annotatedClass) {
+            MeterRegistry registry = new SimpleMeterRegistry();
+            TimedAspect timedAspect = new TimedAspect(registry);
+            timedAspect.setMeterTagAnnotationHandler(meterTagAnnotationHandler);
+
+            AspectJProxyFactory pf = new AspectJProxyFactory(annotatedClass.newInstance());
+            pf.addAspect(timedAspect);
+
+            MeterTagClassInterface service = pf.getProxy();
+
+            service.getAnnotationForTagValueExpression("15L");
+
+            assertThat(registry.get("method.timed").tag("test", "hello characters").timer().count()).isEqualTo(1);
+        }
+
+        @Test
+        void meterTagOnPackagePrivateMethod() {
+            MeterRegistry registry = new SimpleMeterRegistry();
+            TimedAspect timedAspect = new TimedAspect(registry);
+            timedAspect.setMeterTagAnnotationHandler(meterTagAnnotationHandler);
+
+            AspectJProxyFactory pf = new AspectJProxyFactory(new MeterTagClass());
+            pf.setProxyTargetClass(true);
+            pf.addAspect(timedAspect);
+
+            MeterTagClass service = pf.getProxy();
+
+            service.getAnnotationForPackagePrivateMethod("bar");
+
+            assertThat(registry.get("method.timed").tag("foo", "bar").timer().count()).isEqualTo(1);
+        }
+
+        enum AnnotatedTestClass {
+
+            CLASS_WITHOUT_INTERFACE(MeterTagClass.class), CLASS_WITH_INTERFACE(MeterTagClassChild.class);
+
+            private final Class<? extends MeterTagClassInterface> clazz;
+
+            AnnotatedTestClass(Class<? extends MeterTagClassInterface> clazz) {
+                this.clazz = clazz;
+            }
+
+            @SuppressWarnings("unchecked")
+            <T extends MeterTagClassInterface> T newInstance() {
+                try {
+                    return (T) clazz.getDeclaredConstructor().newInstance();
+                }
+                catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+
+        }
+
+        interface MeterTagClassInterface {
+
+            @Timed
+            void getAnnotationForTagValueResolver(@MeterTag(key = "test", resolver = ValueResolver.class) String test);
+
+            @Timed
+            void getAnnotationForTagValueExpression(
+                    @MeterTag(key = "test", expression = "'hello' + ' characters'") String test);
+
+            @Timed
+            void getAnnotationForArgumentToString(@MeterTag("test") Long param);
+
+        }
+
+        static class MeterTagClass implements MeterTagClassInterface {
+
+            @Timed
+            @Override
+            public void getAnnotationForTagValueResolver(
+                    @MeterTag(key = "test", resolver = ValueResolver.class) String test) {
+            }
+
+            @Timed
+            @Override
+            public void getAnnotationForTagValueExpression(
+                    @MeterTag(key = "test", expression = "'hello' + ' characters'") String test) {
+            }
+
+            @Timed
+            @Override
+            public void getAnnotationForArgumentToString(@MeterTag("test") Long param) {
+            }
+
+            @Timed
+            void getAnnotationForPackagePrivateMethod(@MeterTag("foo") String foo) {
+            }
+
+        }
+
+        static class MeterTagClassChild implements MeterTagClassInterface {
+
+            @Timed
+            @Override
+            public void getAnnotationForTagValueResolver(String test) {
+            }
+
+            @Timed
+            @Override
+            public void getAnnotationForTagValueExpression(String test) {
+            }
+
+            @Timed
+            @Override
+            public void getAnnotationForArgumentToString(Long param) {
+            }
+
+        }
+
     }
 
     private final class FailingMeterRegistry extends SimpleMeterRegistry {

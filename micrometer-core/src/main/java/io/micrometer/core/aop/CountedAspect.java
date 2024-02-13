@@ -15,9 +15,9 @@
  */
 package io.micrometer.core.aop;
 
+import io.micrometer.common.lang.NonNullApi;
 import io.micrometer.core.annotation.Counted;
 import io.micrometer.core.instrument.*;
-import io.micrometer.core.lang.NonNullApi;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
@@ -182,7 +182,7 @@ public class CountedAspect {
      * @return Whatever the intercepted method returns.
      * @throws Throwable When the intercepted method throws one.
      */
-    @Around("@annotation(counted)")
+    @Around(value = "@annotation(counted)", argNames = "pjp,counted")
     public Object interceptAndRecord(ProceedingJoinPoint pjp, Counted counted) throws Throwable {
         if (shouldSkip.test(pjp)) {
             return pjp.proceed();

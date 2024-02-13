@@ -15,9 +15,11 @@
  */
 package io.micrometer.core.instrument;
 
+import io.micrometer.common.lang.Nullable;
+import io.micrometer.core.instrument.binder.httpcomponents.ApacheHttpClientObservationDocumentation;
 import io.micrometer.core.instrument.binder.httpcomponents.DefaultUriMapper;
 import io.micrometer.core.instrument.binder.httpcomponents.MicrometerHttpRequestExecutor;
-import io.micrometer.core.lang.Nullable;
+import io.micrometer.observation.docs.ObservationDocumentation;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
 import org.apache.http.client.methods.HttpUriRequest;
@@ -29,11 +31,26 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 
-class ApacheHttpClientTimingInstrumentationVerificationTests extends HttpClientTimingInstrumentationVerificationTests {
+@Deprecated
+class ApacheHttpClientTimingInstrumentationVerificationTests
+        extends HttpClientTimingInstrumentationVerificationTests<HttpClient> {
 
-    private final HttpClient httpClient = HttpClientBuilder.create()
-        .setRequestExecutor(MicrometerHttpRequestExecutor.builder(getRegistry()).build())
-        .build();
+    @Override
+    protected HttpClient clientInstrumentedWithMetrics() {
+        return HttpClientBuilder.create()
+            .setRequestExecutor(MicrometerHttpRequestExecutor.builder(getRegistry()).build())
+            .build();
+    }
+
+    @Nullable
+    @Override
+    protected HttpClient clientInstrumentedWithObservations() {
+        return HttpClientBuilder.create()
+            .setRequestExecutor(MicrometerHttpRequestExecutor.builder(getRegistry())
+                .observationRegistry(getObservationRegistry())
+                .build())
+            .build();
+    }
 
     @Override
     protected String timerName() {
@@ -41,11 +58,17 @@ class ApacheHttpClientTimingInstrumentationVerificationTests extends HttpClientT
     }
 
     @Override
-    protected void sendHttpRequest(HttpMethod method, @Nullable byte[] body, URI baseUri, String templatedPath,
-            String... pathVariables) {
+    protected ObservationDocumentation observationDocumentation() {
+        return ApacheHttpClientObservationDocumentation.DEFAULT;
+    }
+
+    @Override
+    protected void sendHttpRequest(HttpClient instrumentedClient, HttpMethod method, @Nullable byte[] body, URI baseUri,
+            String templatedPath, String... pathVariables) {
         try {
-            EntityUtils.consume(
-                    httpClient.execute(makeRequest(method, body, baseUri, templatedPath, pathVariables)).getEntity());
+            EntityUtils
+                .consume(instrumentedClient.execute(makeRequest(method, body, baseUri, templatedPath, pathVariables))
+                    .getEntity());
         }
         catch (IOException e) {
             throw new RuntimeException(e);

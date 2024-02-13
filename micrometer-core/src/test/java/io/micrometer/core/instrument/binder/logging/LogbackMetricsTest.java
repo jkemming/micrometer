@@ -18,6 +18,7 @@ package io.micrometer.core.instrument.binder.logging;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.LoggerContext;
+import io.micrometer.common.lang.NonNullApi;
 import io.micrometer.core.Issue;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Meter;
@@ -26,7 +27,6 @@ import io.micrometer.core.instrument.MockClock;
 import io.micrometer.core.instrument.cumulative.CumulativeCounter;
 import io.micrometer.core.instrument.simple.SimpleConfig;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import io.micrometer.core.lang.NonNullApi;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,8 +47,10 @@ class LogbackMetricsTest {
 
     @BeforeEach
     void bindLogbackMetrics() {
+        // tag::setup[]
         logbackMetrics = new LogbackMetrics();
         logbackMetrics.bindTo(registry);
+        // end::setup[]
     }
 
     @AfterEach
@@ -62,6 +64,7 @@ class LogbackMetricsTest {
     void logbackLevelMetrics() {
         assertThat(registry.get("logback.events").counter().count()).isEqualTo(0.0);
 
+        // tag::example[]
         logger.setLevel(Level.INFO);
 
         logger.warn("warn");
@@ -70,6 +73,7 @@ class LogbackMetricsTest {
 
         assertThat(registry.get("logback.events").tags("level", "warn").counter().count()).isEqualTo(1.0);
         assertThat(registry.get("logback.events").tags("level", "debug").counter().count()).isEqualTo(0.0);
+        // end::example[]
     }
 
     @Issue("#183")

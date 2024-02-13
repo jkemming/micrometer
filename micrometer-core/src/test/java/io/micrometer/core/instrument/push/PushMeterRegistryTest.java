@@ -17,6 +17,7 @@ package io.micrometer.core.instrument.push;
 
 import io.micrometer.core.Issue;
 import io.micrometer.core.instrument.*;
+import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.distribution.DistributionStatisticConfig;
 import io.micrometer.core.instrument.distribution.pause.PauseDetector;
 import io.micrometer.core.instrument.step.StepMeterRegistry;
@@ -25,31 +26,30 @@ import io.micrometer.core.instrument.util.NamedThreadFactory;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
-import java.util.ArrayDeque;
-import java.util.Arrays;
-import java.util.Deque;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.ToDoubleFunction;
 import java.util.function.ToLongFunction;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.LongStream;
 
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
+import static java.util.concurrent.TimeUnit.*;
+import static org.assertj.core.api.Assertions.*;
+import static org.awaitility.Awaitility.await;
 
 /**
  * Tests for {@link PushMeterRegistry}.
  */
 class PushMeterRegistryTest {
 
-    static ThreadFactory threadFactory = new NamedThreadFactory("PushMeterRegistryTest");
+    static final Duration STEP_DURATION = Duration.ofMillis(10);
 
     StepRegistryConfig config = new StepRegistryConfig() {
         @Override
         public Duration step() {
-            return Duration.ofMillis(10);
+            return STEP_DURATION;
         }
 
         @Override
@@ -67,11 +67,13 @@ class PushMeterRegistryTest {
 
     @Test
     void whenUncaughtExceptionInPublish_taskStillScheduled() throws InterruptedException {
+        ThreadFactory threadFactory = new NamedThreadFactory("PushMeterRegistryTest");
         PushMeterRegistry pushMeterRegistry = new ThrowingPushMeterRegistry(config, latch);
         pushMeterRegistry.start(threadFactory);
         assertThat(latch.await(500, TimeUnit.MILLISECONDS))
             .as("publish should continue to be scheduled even if an uncaught exception is thrown")
             .isTrue();
+        pushMeterRegistry.close();
     }
 
     @Test
@@ -92,7 +94,7 @@ class PushMeterRegistryTest {
 
     @Test
     @Issue("#3711")
-    void scheduledPublishOverlapWithPublishOnClose() throws InterruptedException {
+    void doNotPublishAgainOnClose_whenScheduledPublishInProgress() throws InterruptedException {
         MockClock clock = new MockClock();
         CyclicBarrier barrier = new CyclicBarrier(2);
         OverlappingStepMeterRegistry overlappingStepMeterRegistry = new OverlappingStepMeterRegistry(config, clock,
@@ -105,12 +107,18 @@ class PushMeterRegistryTest {
 
         // simulated scheduled publish
         Thread scheduledPublishingThread = new Thread(
-                () -> ((PushMeterRegistry) overlappingStepMeterRegistry).publishSafely(),
+                () -> ((PushMeterRegistry) overlappingStepMeterRegistry).publishSafelyOrSkipIfInProgress(),
                 "scheduledMetricsPublisherThread");
         scheduledPublishingThread.start();
         // publish on shutdown
         Thread onClosePublishThread = new Thread(overlappingStepMeterRegistry::close, "shutdownHookThread");
         onClosePublishThread.start();
+        try {
+            barrier.await(100, MILLISECONDS);
+        }
+        catch (InterruptedException | BrokenBarrierException | TimeoutException e) {
+            throw new RuntimeException(e);
+        }
         scheduledPublishingThread.join();
         onClosePublishThread.join();
 
@@ -118,6 +126,135 @@ class PushMeterRegistryTest {
         Deque<Double> firstPublishValues = overlappingStepMeterRegistry.publishes.get(0);
         assertThat(firstPublishValues.pop()).isEqualTo(1);
         assertThat(firstPublishValues.pop()).isEqualTo(2.5);
+    }
+
+    @Test
+    @Issue("#2818")
+    void publishTimeIsRandomizedWithinStep() {
+        Duration startTime = Duration.ofMillis(4);
+        MockClock clock = new MockClock();
+        clock.add(-1, MILLISECONDS); // set time to 0
+        clock.add(startTime);
+        PushMeterRegistry registry = new CountingPushMeterRegistry(config, clock);
+        long minOffsetMillis = 8; // 4 (start) + 8 (offset) = 12 (2ms into next step)
+        // exclusive upper bound
+        long maxOffsetMillis = 14; // 4 (start) + 14 (offset) = 18 (8ms into next step;
+                                   // 80% of step is 8ms)
+        Set<Long> observedDelays = new HashSet<>((int) (maxOffsetMillis - minOffsetMillis));
+        IntStream.range(0, 10_000).forEach(i -> {
+            long delay = registry.calculateInitialDelay();
+            // isBetween is inclusive; subtract 1 from exclusive max offset
+            assertThat(delay).isBetween(minOffsetMillis, maxOffsetMillis - 1);
+            observedDelays.add(delay);
+        });
+        List<Long> expectedDelays = LongStream.range(minOffsetMillis, maxOffsetMillis)
+            .boxed()
+            .collect(Collectors.toList());
+        assertThat(observedDelays).containsExactlyElementsOf(expectedDelays);
+    }
+
+    @Test
+    @Issue("#3872")
+    void waitForScheduledPublishToFinish_whenClosedWhilePublishIsInProgress()
+            throws InterruptedException, BrokenBarrierException, TimeoutException {
+        MockClock clock = new MockClock();
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        OverlappingStepMeterRegistry registry = new OverlappingStepMeterRegistry(config, clock, barrier);
+        Counter c1 = registry.counter("c1");
+        Counter c2 = registry.counter("c2");
+        c1.increment();
+        c2.increment(2.5);
+        clock.add(config.step());
+
+        // start scheduled publish but don't let it finish yet
+        Thread scheduledPublishingThread = new Thread(
+                () -> ((PushMeterRegistry) registry).publishSafelyOrSkipIfInProgress(),
+                "testScheduledMetricsPublisherThread");
+        scheduledPublishingThread.start();
+        // close registry during publish
+        Thread closeThread = new Thread(registry::close, "simulatedShutdownHookThread");
+        closeThread.start();
+        // close is blocked (waiting for publish to finish)
+        await().atMost(config.step())
+            .pollInterval(1, MILLISECONDS)
+            .untilAsserted(() -> assertThat(closeThread.getState()).isEqualTo(Thread.State.WAITING));
+        // allow publish to finish
+        barrier.await(config.step().toMillis(), MILLISECONDS);
+        // publish thread will finish, followed by the close thread
+        scheduledPublishingThread.join();
+        closeThread.join();
+
+        assertThat(registry.publishes).as("only one publish happened").hasSize(1);
+        Deque<Double> firstPublishValues = registry.publishes.get(0);
+        assertThat(firstPublishValues.pop()).isEqualTo(1); // c1 counter count
+        assertThat(firstPublishValues.pop()).isEqualTo(2.5); // c2 counter count
+    }
+
+    @Test
+    void publishSafelyRespectsInterrupt() throws InterruptedException {
+        MockClock clock = new MockClock();
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        OverlappingStepMeterRegistry registry = new OverlappingStepMeterRegistry(config, clock, barrier);
+        Counter c1 = registry.counter("c1");
+        Counter c2 = registry.counter("c2");
+        c1.increment();
+        c2.increment(2.5);
+        clock.add(config.step());
+
+        // start scheduled publish but don't let it finish yet
+        Thread scheduledPublishingThread = new Thread(
+                () -> ((PushMeterRegistry) registry).publishSafelyOrSkipIfInProgress(),
+                "testScheduledMetricsPublisherThread");
+        scheduledPublishingThread.start();
+        // close registry during publish
+        Thread closeThread = new Thread(registry::close, "simulatedShutdownHookThread");
+        closeThread.start();
+        // close is blocked (waiting for publish to finish)
+        await().atMost(config.step())
+            .pollInterval(1, MILLISECONDS)
+            .untilAsserted(() -> assertThat(closeThread.getState()).isEqualTo(Thread.State.WAITING));
+
+        scheduledPublishingThread.interrupt();
+
+        // both threads finish without reaching the barrier
+        scheduledPublishingThread.join();
+        closeThread.join();
+
+        assertThat(registry.numberOfPublishes.get()).isZero();
+    }
+
+    @Test
+    void closeRespectsInterrupt() throws InterruptedException {
+        MockClock clock = new MockClock();
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        OverlappingStepMeterRegistry registry = new OverlappingStepMeterRegistry(config, clock, barrier);
+        Counter c1 = registry.counter("c1");
+        Counter c2 = registry.counter("c2");
+        c1.increment();
+        c2.increment(2.5);
+        clock.add(config.step());
+
+        // start scheduled publish but don't let it finish yet
+        Thread scheduledPublishingThread = new Thread(
+                () -> ((PushMeterRegistry) registry).publishSafelyOrSkipIfInProgress(),
+                "testScheduledMetricsPublisherThread");
+        scheduledPublishingThread.start();
+        // close registry during publish
+        Thread closeThread = new Thread(registry::close, "simulatedShutdownHookThread");
+        closeThread.start();
+        // close is blocked (waiting for publish to finish)
+        await().atMost(config.step())
+            .pollInterval(1, MILLISECONDS)
+            .untilAsserted(() -> assertThat(closeThread.getState()).isEqualTo(Thread.State.WAITING));
+
+        closeThread.interrupt();
+
+        // close thread finishes without reaching barrier
+        closeThread.join();
+
+        // publish thread will continue in background, but hopefully the 100ms block on
+        // the barrier means it won't finish before this assertion
+        assertThat(registry.numberOfPublishes.get()).isZero();
     }
 
     private static class OverlappingStepMeterRegistry extends StepMeterRegistry {
@@ -155,17 +292,6 @@ class PushMeterRegistryTest {
                             l1.addAll(l2);
                             return l1;
                         }));
-        }
-
-        @Override
-        public void close() {
-            try {
-                barrier.await(100, MILLISECONDS);
-            }
-            catch (InterruptedException | BrokenBarrierException | TimeoutException e) {
-                throw new RuntimeException(e);
-            }
-            super.close();
         }
 
     }

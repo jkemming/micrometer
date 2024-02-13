@@ -24,6 +24,7 @@ import com.google.cloud.monitoring.v3.MetricServiceClient;
 import com.google.cloud.monitoring.v3.MetricServiceSettings;
 import com.google.monitoring.v3.*;
 import com.google.protobuf.Timestamp;
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.*;
 import io.micrometer.core.instrument.distribution.CountAtBucket;
@@ -36,7 +37,6 @@ import io.micrometer.core.instrument.step.StepMeterRegistry;
 import io.micrometer.core.instrument.step.StepTimer;
 import io.micrometer.core.instrument.util.DoubleFormat;
 import io.micrometer.core.instrument.util.NamedThreadFactory;
-import io.micrometer.core.lang.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -125,6 +125,7 @@ public class StackdriverMeterRegistry extends StepMeterRegistry {
                 logger.error("unable to start stackdriver, service settings are not available");
             }
             else {
+                shutdownClientIfNecessary(true);
                 try {
                     this.client = MetricServiceClient.create(metricServiceSettings);
                     super.start(threadFactory);
@@ -137,10 +138,56 @@ public class StackdriverMeterRegistry extends StepMeterRegistry {
     }
 
     @Override
+    public void close() {
+        try {
+            super.close();
+        }
+        finally {
+            shutdownClientIfNecessary(false);
+        }
+    }
+
+    @Override
     public void stop() {
-        if (client != null)
-            client.shutdownNow();
         super.stop();
+    }
+
+    private void shutdownClientIfNecessary(final boolean quietly) {
+        if (client == null)
+            return;
+        if (!client.isShutdown()) {
+            try {
+                client.shutdownNow();
+                final boolean terminated = client.awaitTermination(10, TimeUnit.SECONDS);
+                if (!terminated) {
+                    logger.warn("The metric service client failed to terminate within the timeout");
+                }
+            }
+            catch (final RuntimeException e) {
+                if (quietly) {
+                    logger.warn("Failed to shutdown the metric service client", e);
+                }
+                else {
+                    throw e;
+                }
+            }
+            catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        try {
+            client.close();
+        }
+        catch (final RuntimeException e) {
+            if (quietly) {
+                logger.warn("Failed to close metric service client", e);
+            }
+            else {
+                throw e;
+            }
+        }
+        client = null;
     }
 
     @Override
@@ -442,7 +489,7 @@ public class StackdriverMeterRegistry extends StepMeterRegistry {
         }
 
         private String metricType(Meter.Id id, @Nullable String statistic) {
-            StringBuilder metricType = new StringBuilder("custom.googleapis.com/").append(getConventionName(id));
+            StringBuilder metricType = new StringBuilder(config.metricTypePrefix()).append(getConventionName(id));
             if (statistic != null) {
                 metricType.append('/').append(statistic);
             }

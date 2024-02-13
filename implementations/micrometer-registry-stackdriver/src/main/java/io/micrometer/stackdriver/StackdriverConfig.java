@@ -19,10 +19,10 @@ import com.google.api.gax.core.CredentialsProvider;
 import com.google.api.gax.core.FixedCredentialsProvider;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.monitoring.v3.MetricServiceSettings;
+import io.micrometer.common.util.StringUtils;
 import io.micrometer.core.instrument.config.validate.InvalidReason;
 import io.micrometer.core.instrument.config.validate.Validated;
 import io.micrometer.core.instrument.step.StepRegistryConfig;
-import io.micrometer.core.instrument.util.StringUtils;
 
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -81,6 +81,19 @@ public interface StackdriverConfig extends StepRegistryConfig {
      */
     default boolean useSemanticMetricTypes() {
         return getBoolean(this, "useSemanticMetricTypes").orElse(false);
+    }
+
+    /**
+     * Return metric type prefix.
+     * <p>
+     * Available prefixes defined in
+     * <a href= "https://cloud.google.com/monitoring/custom-metrics#identifier">Google
+     * Cloud documentation</a>.
+     * @return a prefix for MetricType
+     * @since 1.10.0
+     */
+    default String metricTypePrefix() {
+        return getString(this, "metricTypePrefix").orElse("custom.googleapis.com/");
     }
 
     /**

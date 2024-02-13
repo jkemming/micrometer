@@ -15,12 +15,12 @@
  */
 package io.micrometer.core.instrument.binder.httpcomponents;
 
+import io.micrometer.common.lang.NonNull;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.binder.MeterBinder;
-import io.micrometer.core.lang.NonNull;
 import org.apache.http.conn.routing.HttpRoute;
 import org.apache.http.pool.ConnPoolControl;
 
@@ -36,6 +36,10 @@ import org.apache.http.pool.ConnPoolControl;
  *      HttpClient httpClient = HttpClientBuilder.create().setConnectionManager(connectionManager).build();
  *      new PoolingHttpClientConnectionManagerMetricsBinder(connectionManager, "my-pool").bindTo(registry);
  * }</pre>
+ * <p>
+ * See
+ * {@link io.micrometer.core.instrument.binder.httpcomponents.hc5.PoolingHttpClientConnectionManagerMetricsBinder}
+ * for Apache HTTP client 5 support.
  *
  * @author Benjamin Hubert (benjamin.hubert@willhaben.at)
  * @since 1.3.0

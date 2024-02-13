@@ -15,6 +15,9 @@
  */
 package io.micrometer.core.instrument.logging;
 
+import io.micrometer.common.lang.Nullable;
+import io.micrometer.common.util.internal.logging.InternalLogger;
+import io.micrometer.common.util.internal.logging.InternalLoggerFactory;
 import io.micrometer.core.annotation.Incubating;
 import io.micrometer.core.instrument.Clock;
 import io.micrometer.core.instrument.DistributionSummary;
@@ -30,9 +33,6 @@ import io.micrometer.core.instrument.step.StepMeterRegistry;
 import io.micrometer.core.instrument.step.StepTimer;
 import io.micrometer.core.instrument.util.NamedThreadFactory;
 import io.micrometer.core.instrument.util.TimeUtils;
-import io.micrometer.core.lang.Nullable;
-import io.micrometer.core.util.internal.logging.InternalLogger;
-import io.micrometer.core.util.internal.logging.InternalLoggerFactory;
 
 import java.time.Duration;
 import java.util.concurrent.ThreadFactory;
@@ -48,6 +48,7 @@ import static java.util.stream.Collectors.joining;
  * Logging {@link io.micrometer.core.instrument.MeterRegistry}.
  *
  * @author Jon Schneider
+ * @author Matthieu Borgraeve
  * @since 1.1.0
  */
 @Incubating(since = "1.1.0")
@@ -65,8 +66,33 @@ public class LoggingMeterRegistry extends StepMeterRegistry {
         this(LoggingRegistryConfig.DEFAULT, Clock.SYSTEM);
     }
 
+    /**
+     * Constructor allowing a custom clock and configuration.
+     * @param config the LoggingRegistryConfig
+     * @param clock the Clock
+     */
     public LoggingMeterRegistry(LoggingRegistryConfig config, Clock clock) {
-        this(config, clock, new NamedThreadFactory("logging-metrics-publisher"), log::info, null);
+        this(config, clock, log::info);
+    }
+
+    /**
+     * Constructor allowing custom sink instead of a default {@code log::info}.
+     * @param loggingSink the custom sink that will be called for each time series.
+     * @since 1.11.0
+     */
+    public LoggingMeterRegistry(Consumer<String> loggingSink) {
+        this(LoggingRegistryConfig.DEFAULT, Clock.SYSTEM, loggingSink);
+    }
+
+    /**
+     * Constructor allowing a custom sink, clock and configuration.
+     * @param config the LoggingRegistryConfig
+     * @param clock the Clock
+     * @param loggingSink the custom sink that will be called for each time series.
+     * @since 1.11.0
+     */
+    public LoggingMeterRegistry(LoggingRegistryConfig config, Clock clock, Consumer<String> loggingSink) {
+        this(config, clock, new NamedThreadFactory("logging-metrics-publisher"), loggingSink, null);
     }
 
     private LoggingMeterRegistry(LoggingRegistryConfig config, Clock clock, ThreadFactory threadFactory,

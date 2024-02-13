@@ -15,23 +15,23 @@
  */
 package io.micrometer.core.instrument;
 
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.distribution.DistributionStatisticConfig;
 import io.micrometer.core.instrument.distribution.HistogramSupport;
-import io.micrometer.core.lang.Nullable;
 
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
+import java.util.function.*;
 
 /**
  * A long task timer is used to track the total duration of all in-flight long-running
  * tasks and the number of such tasks.
  *
  * @author Jon Schneider
+ * @author Jonatan Ivanov
  */
 public interface LongTaskTimer extends Meter, HistogramSupport {
 
@@ -89,6 +89,70 @@ public interface LongTaskTimer extends Meter, HistogramSupport {
         Sample sample = start();
         try {
             return f.get();
+        }
+        finally {
+            sample.stop();
+        }
+    }
+
+    /**
+     * Executes the supplier {@code f} and records the time taken.
+     * @param f Function to execute and measure the execution time.
+     * @return The return value of {@code f}.
+     * @since 1.10.0
+     */
+    default boolean record(BooleanSupplier f) {
+        Sample sample = start();
+        try {
+            return f.getAsBoolean();
+        }
+        finally {
+            sample.stop();
+        }
+    }
+
+    /**
+     * Executes the supplier {@code f} and records the time taken.
+     * @param f Function to execute and measure the execution time.
+     * @return The return value of {@code f}.
+     * @since 1.10.0
+     */
+    default int record(IntSupplier f) {
+        Sample sample = start();
+        try {
+            return f.getAsInt();
+        }
+        finally {
+            sample.stop();
+        }
+    }
+
+    /**
+     * Executes the supplier {@code f} and records the time taken.
+     * @param f Function to execute and measure the execution time.
+     * @return The return value of {@code f}.
+     * @since 1.10.0
+     */
+    default long record(LongSupplier f) {
+        Sample sample = start();
+        try {
+            return f.getAsLong();
+        }
+        finally {
+            sample.stop();
+        }
+    }
+
+    /**
+     * Executes the supplier {@code f} and records the time taken.
+     * @param f Function to execute and measure the execution time.
+     * @return The return value of {@code f}.
+     * @since 1.10.0
+     */
+    default double record(DoubleSupplier f) {
+        Sample sample = start();
+        try {
+            return f.getAsDouble();
         }
         finally {
             sample.stop();
@@ -410,6 +474,20 @@ public interface LongTaskTimer extends Meter, HistogramSupport {
         }
 
         /**
+         * Convenience method to create meters from the builder that only differ in tags.
+         * This method can be used for dynamic tagging by creating the builder once and
+         * applying the dynamically changing tags using the returned
+         * {@link MeterProvider}.
+         * @param registry A registry to add the meter to, if it doesn't already exist.
+         * @return A {@link MeterProvider} that returns a meter based on the provided
+         * tags.
+         * @since 1.12.0
+         */
+        public MeterProvider<LongTaskTimer> withRegistry(MeterRegistry registry) {
+            return extraTags -> register(registry, tags.and(extraTags));
+        }
+
+        /**
          * Add the long task timer to a single registry, or return an existing long task
          * timer in that registry. The returned long task timer will be unique for each
          * registry, but each registry is guaranteed to only create one long task timer
@@ -419,6 +497,10 @@ public interface LongTaskTimer extends Meter, HistogramSupport {
          * @return A new or existing long task timer.
          */
         public LongTaskTimer register(MeterRegistry registry) {
+            return register(registry, tags);
+        }
+
+        private LongTaskTimer register(MeterRegistry registry, Tags tags) {
             return registry.more()
                 .longTaskTimer(new Meter.Id(name, tags, null, description, Type.LONG_TASK_TIMER),
                         distributionConfigBuilder.build());

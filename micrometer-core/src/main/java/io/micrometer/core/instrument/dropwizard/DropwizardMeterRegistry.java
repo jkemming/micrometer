@@ -18,6 +18,8 @@ package io.micrometer.core.instrument.dropwizard;
 import com.codahale.metrics.ExponentiallyDecayingReservoir;
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.MetricRegistry;
+import io.micrometer.common.lang.Nullable;
+import io.micrometer.common.util.internal.logging.WarnThenDebugLogger;
 import io.micrometer.core.instrument.*;
 import io.micrometer.core.instrument.config.NamingConvention;
 import io.micrometer.core.instrument.distribution.DistributionStatisticConfig;
@@ -26,12 +28,9 @@ import io.micrometer.core.instrument.distribution.pause.PauseDetector;
 import io.micrometer.core.instrument.internal.DefaultLongTaskTimer;
 import io.micrometer.core.instrument.internal.DefaultMeter;
 import io.micrometer.core.instrument.util.HierarchicalNameMapper;
-import io.micrometer.core.lang.Nullable;
-import io.micrometer.core.util.internal.logging.WarnThenDebugLogger;
 
 import java.lang.ref.WeakReference;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.ToDoubleFunction;
 import java.util.function.ToLongFunction;
 
@@ -53,8 +52,6 @@ public abstract class DropwizardMeterRegistry extends MeterRegistry {
 
     private final DropwizardConfig dropwizardConfig;
 
-    private final AtomicBoolean warnLogged = new AtomicBoolean();
-
     public DropwizardMeterRegistry(DropwizardConfig config, MetricRegistry registry, HierarchicalNameMapper nameMapper,
             Clock clock) {
         super(clock);
@@ -71,6 +68,11 @@ public abstract class DropwizardMeterRegistry extends MeterRegistry {
 
     private void onMeterRemoved(Meter meter) {
         registry.remove(hierarchicalName(meter.getId()));
+        if (meter instanceof LongTaskTimer) {
+            for (Statistic statistic : Statistic.values()) {
+                registry.remove(hierarchicalName(meter.getId().withTag(statistic)));
+            }
+        }
     }
 
     public MetricRegistry getDropwizardRegistry() {

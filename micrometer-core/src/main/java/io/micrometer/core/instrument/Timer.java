@@ -15,19 +15,19 @@
  */
 package io.micrometer.core.instrument;
 
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.annotation.Incubating;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.distribution.CountAtBucket;
 import io.micrometer.core.instrument.distribution.HistogramSupport;
 import io.micrometer.core.instrument.distribution.ValueAtPercentile;
 import io.micrometer.core.instrument.distribution.pause.PauseDetector;
-import io.micrometer.core.lang.Nullable;
 
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
+import java.util.function.*;
 
 /**
  * Timer intended to track of a large number of short running events. Example would be
@@ -36,6 +36,7 @@ import java.util.function.Supplier;
  *
  * @author Jon Schneider
  * @author Oleksii Bondar
+ * @author Jonatan Ivanov
  */
 public interface Timer extends Meter, HistogramSupport {
 
@@ -126,6 +127,46 @@ public interface Timer extends Meter, HistogramSupport {
      */
     @Nullable
     <T> T record(Supplier<T> f);
+
+    /**
+     * Executes the Supplier {@code f} and records the time taken.
+     * @param f Function to execute and measure the execution time.
+     * @return The return value of {@code f}.
+     * @since 1.10.0
+     */
+    default boolean record(BooleanSupplier f) {
+        return record((Supplier<Boolean>) f::getAsBoolean);
+    }
+
+    /**
+     * Executes the Supplier {@code f} and records the time taken.
+     * @param f Function to execute and measure the execution time.
+     * @return The return value of {@code f}.
+     * @since 1.10.0
+     */
+    default int record(IntSupplier f) {
+        return record((Supplier<Integer>) f::getAsInt);
+    }
+
+    /**
+     * Executes the Supplier {@code f} and records the time taken.
+     * @param f Function to execute and measure the execution time.
+     * @return The return value of {@code f}.
+     * @since 1.10.0
+     */
+    default long record(LongSupplier f) {
+        return record((Supplier<Long>) f::getAsLong);
+    }
+
+    /**
+     * Executes the Supplier {@code f} and records the time taken.
+     * @param f Function to execute and measure the execution time.
+     * @return The return value of {@code f}.
+     * @since 1.10.0
+     */
+    default double record(DoubleSupplier f) {
+        return record((Supplier<Double>) f::getAsDouble);
+    }
 
     /**
      * Executes the callable {@code f} and records the time taken.
@@ -387,6 +428,20 @@ public interface Timer extends Meter, HistogramSupport {
         }
 
         /**
+         * Convenience method to create meters from the builder that only differ in tags.
+         * This method can be used for dynamic tagging by creating the builder once and
+         * applying the dynamically changing tags using the returned
+         * {@link MeterProvider}.
+         * @param registry A registry to add the meter to, if it doesn't already exist.
+         * @return A {@link MeterProvider} that returns a meter based on the provided
+         * tags.
+         * @since 1.12.0
+         */
+        public MeterProvider<Timer> withRegistry(MeterRegistry registry) {
+            return extraTags -> register(registry, tags.and(extraTags));
+        }
+
+        /**
          * Add the timer to a single registry, or return an existing timer in that
          * registry. The returned timer will be unique for each registry, but each
          * registry is guaranteed to only create one timer for the same combination of
@@ -395,6 +450,10 @@ public interface Timer extends Meter, HistogramSupport {
          * @return A new or existing timer.
          */
         public Timer register(MeterRegistry registry) {
+            return register(registry, tags);
+        }
+
+        private Timer register(MeterRegistry registry, Tags tags) {
             // the base unit for a timer will be determined by the monitoring system
             // implementation
             return registry.timer(new Meter.Id(name, tags, null, description, Type.TIMER),

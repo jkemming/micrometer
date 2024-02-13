@@ -15,48 +15,58 @@
  */
 package io.micrometer.core.instrument;
 
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.annotation.Incubating;
 import io.micrometer.core.instrument.search.RequiredSearch;
 import io.micrometer.core.ipc.http.HttpSender;
 import io.micrometer.core.ipc.http.HttpUrlConnectionSender;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationHandler;
+import io.micrometer.observation.ObservationRegistry;
+import io.micrometer.observation.tck.TestObservationRegistry;
+import io.micrometer.observation.transport.ReceiverContext;
+import org.assertj.core.api.Condition;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import java.net.URI;
 import java.time.Duration;
 import java.util.function.Function;
 
+import static io.micrometer.observation.tck.TestObservationRegistryAssert.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Verify the instrumentation of an HTTP server has the minimum expected results. See
- * {@link #startInstrumentedServer()} for the required specification the instrumented HTTP
- * server must handle.
+ * {@link #startInstrumentedWithMetricsServer()} for the required specification the
+ * instrumented HTTP server must handle.
  */
 @Incubating(since = "1.8.9")
-public abstract class HttpServerTimingInstrumentationVerificationTests extends InstrumentationVerificationTests {
+@ExtendWith(InstrumentationVerificationTests.AfterBeforeParameterResolver.class)
+public abstract class HttpServerTimingInstrumentationVerificationTests extends InstrumentationTimingVerificationTests {
 
     private final HttpSender sender = new HttpUrlConnectionSender();
 
     private URI baseUri;
 
-    /**
-     * A default is provided that should be preferred by new instrumentations. Existing
-     * instrumentations that use a different value to maintain backwards compatibility may
-     * override this method to run tests with a different name used in assertions.
-     * @return name of the meter timing http server requests
-     */
+    private boolean assumptionSucceeded = true;
+
+    @Override
     protected String timerName() {
         return "http.server.requests";
     }
 
     /**
-     * Start the instrumented HTTP server to be tested. No request body or query
-     * parameters will be sent, and any response body will be ignored. The server MUST
-     * serve the routes described by {@link InstrumentedRoutes}. Constants are available
-     * in that class for the routes that will have requests sent to them as part of the
-     * TCK. The server MUST NOT have a route for the following:
+     * Start the instrumented HTTP server to be tested. The server will be instrumented
+     * using the {@link MeterRegistry} only. No request body or query parameters will be
+     * sent, and any response body will be ignored. The server MUST serve the routes
+     * described by {@link InstrumentedRoutes}. Constants are available in that class for
+     * the routes that will have requests sent to them as part of the TCK. The server MUST
+     * NOT have a route for the following:
      * <ul>
      * <li>{@code GET /notFound} (returns 404 response)</li>
      * </ul>
@@ -64,51 +74,124 @@ public abstract class HttpServerTimingInstrumentationVerificationTests extends I
      * a slash (/).
      * @see InstrumentedRoutes
      */
-    protected abstract URI startInstrumentedServer() throws Exception;
+    protected abstract URI startInstrumentedWithMetricsServer() throws Exception;
+
+    /**
+     * Start the instrumented HTTP server to be tested. The server will be instrumented
+     * using the {@link ObservationRegistry}. No request body or query parameters will be
+     * sent, and any response body will be ignored. The server MUST serve the routes
+     * described by {@link InstrumentedRoutes}. Constants are available in that class for
+     * the routes that will have requests sent to them as part of the TCK. The server MUST
+     * NOT have a route for the following:
+     * <ul>
+     * <li>{@code GET /notFound} (returns 404 response)</li>
+     * </ul>
+     * @return base URI where the instrumented server is receiving requests. Must end with
+     * a slash (/) or {@code null} if you don't support observations
+     * @see InstrumentedRoutes
+     */
+    @Nullable
+    protected abstract URI startInstrumentedWithObservationsServer() throws Exception;
 
     /**
      * Stop the instrumented server that was started with
-     * {@link #startInstrumentedServer()}.
+     * {@link #startInstrumentedWithMetricsServer()}.
      */
     protected abstract void stopInstrumentedServer() throws Exception;
 
     @BeforeEach
-    void beforeEach() throws Exception {
-        baseUri = startInstrumentedServer();
+    void beforeEach(TestType testType) throws Exception {
+        if (testType == TestType.METRICS_VIA_METER_REGISTRY) {
+            baseUri = startInstrumentedWithMetricsServer();
+        }
+        else {
+            baseUri = startInstrumentedWithObservationsServer();
+            assumptionSucceeded = baseUri != null;
+            assumeTrue(assumptionSucceeded,
+                    "You must implement the <startInstrumentedWithObservationsServer> method to test your instrumentation against an ObservationRegistry");
+        }
     }
 
     @AfterEach
     void afterEach() throws Exception {
-        stopInstrumentedServer();
+        if (assumptionSucceeded) {
+            stopInstrumentedServer();
+        }
     }
 
-    @Test
-    void uriIsNotFound_whenRouteIsUnmapped() throws Throwable {
+    @ParameterizedTest
+    @EnumSource(TestType.class)
+    void uriIsNotFound_whenRouteIsUnmapped(TestType testType) throws Throwable {
         sender.get(baseUri + "notFound").send();
         checkTimer(rs -> rs.tags("uri", "NOT_FOUND", "status", "404", "method", "GET").timer().count() == 1);
     }
 
-    @Test
-    void uriTemplateIsTagged() throws Throwable {
+    @ParameterizedTest
+    @EnumSource(TestType.class)
+    void uriTemplateIsTagged(TestType testType) throws Throwable {
         sender.get(baseUri + "hello/world").send();
         checkTimer(rs -> rs.tags("uri", InstrumentedRoutes.TEMPLATED_ROUTE, "status", "200", "method", "GET")
             .timer()
             .count() == 1);
     }
 
-    @Test
-    void redirect() throws Throwable {
+    @ParameterizedTest
+    @EnumSource(TestType.class)
+    void redirect(TestType testType) throws Throwable {
         sender.get(baseUri + "foundRedirect").send();
         checkTimer(rs -> rs.tags("uri", InstrumentedRoutes.REDIRECT, "status", "302", "method", "GET")
             .timer()
             .count() == 1);
     }
 
-    @Test
-    void errorResponse() throws Throwable {
+    @ParameterizedTest
+    @EnumSource(TestType.class)
+    void errorResponse(TestType testType) throws Throwable {
         sender.post(baseUri + "error").send();
         checkTimer(
                 rs -> rs.tags("uri", InstrumentedRoutes.ERROR, "status", "500", "method", "POST").timer().count() == 1);
+    }
+
+    @ParameterizedTest
+    @EnumSource(TestType.class)
+    void canExtractContextFromHeaders(TestType testType) throws Throwable {
+        sender.get(baseUri + "hello/micrometer").withHeader("Test-Propagation", "someValue").send();
+
+        // only applicable with Observation-based instrumentation
+        // TODO documentation verification maybe shouldn't be done after each test?
+        // That's why this has to be after the http request is made
+        assumeTrue(testType == TestType.METRICS_VIA_OBSERVATIONS_WITH_METRICS_HANDLER);
+
+        assertThat(getObservationRegistry()).hasSingleObservationThat()
+            .has(new Condition<>(
+                    context -> "someValue".contentEquals((CharSequence) context.getRequired("Test-Propagation")),
+                    "has Test-Propagation in context with value 'someValue'"));
+    }
+
+    @Override
+    protected TestObservationRegistry createObservationRegistryWithMetrics() {
+        TestObservationRegistry observationRegistryWithMetrics = super.createObservationRegistryWithMetrics();
+        observationRegistryWithMetrics.observationConfig().observationHandler(new ExtractHeaderObservationHandler<>());
+        return observationRegistryWithMetrics;
+    }
+
+    @SuppressWarnings("rawtypes")
+    static class ExtractHeaderObservationHandler<T extends ReceiverContext> implements ObservationHandler<T> {
+
+        @SuppressWarnings("unchecked")
+        @Override
+        public void onStart(T context) {
+            String testPropagation = context.getGetter().get(context.getCarrier(), "Test-Propagation");
+            if (testPropagation != null) {
+                context.put("Test-Propagation", testPropagation);
+            }
+        }
+
+        @Override
+        public boolean supportsContext(Observation.Context context) {
+            return context instanceof ReceiverContext;
+        }
+
     }
 
     private void checkTimer(Function<RequiredSearch, Boolean> timerCheck) {

@@ -17,9 +17,9 @@ package io.micrometer.dynatrace;
 
 import com.dynatrace.file.util.DynatraceFileBasedConfigurationProvider;
 import com.dynatrace.metric.util.DynatraceMetricApiConstants;
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.instrument.config.validate.Validated;
 import io.micrometer.core.instrument.step.StepRegistryConfig;
-import io.micrometer.core.lang.Nullable;
 
 import java.util.Collections;
 import java.util.Map;
@@ -37,6 +37,12 @@ import static io.micrometer.dynatrace.DynatraceApiVersion.V2;
  * @since 1.1.0
  */
 public interface DynatraceConfig extends StepRegistryConfig {
+
+    /**
+     * Accept configuration defaults.
+     * @since 1.10.0
+     */
+    DynatraceConfig DEFAULT = k -> null;
 
     @Override
     default String prefix() {
@@ -114,11 +120,16 @@ public interface DynatraceConfig extends StepRegistryConfig {
     }
 
     /**
-     * Return whether to enrich with Dynatrace metadata.
+     * Return whether to enrich with Dynatrace metadata. Dynatrace metadata is provided by
+     * the Dynatrace OneAgent or Dynatrace Kubernetes Operator and helps put metrics
+     * emitted via the Micrometer exporter in context more easily.
      * @return whether to enrich with Dynatrace metadata
      * @since 1.8.0
      */
     default boolean enrichWithDynatraceMetadata() {
+        if (apiVersion() == V1) {
+            return false;
+        }
         return getBoolean(this, "enrichWithDynatraceMetadata").orElse(true);
     }
 
@@ -135,6 +146,23 @@ public interface DynatraceConfig extends StepRegistryConfig {
             return false;
         }
         return getBoolean(this, "useDynatraceSummaryInstruments").orElse(true);
+    }
+
+    /**
+     * Toggle whether to export meter metadata (unit and description) to the Dynatrace
+     * backend for the V2 version of this exporter. Metadata will be exported by default
+     * from Micrometer version 1.12.0. This setting has no effect for the (legacy)
+     * Dynatrace Exporter v1. Setting this toggle to {@code false} has a similar effect to
+     * registering a MeterFilter that removes unit and description from all registered
+     * meters.
+     * @return true if metadata should be exported, false otherwise.
+     * @since 1.12.0
+     */
+    default boolean exportMeterMetadata() {
+        if (apiVersion() == V1) {
+            return false;
+        }
+        return getBoolean(this, "exportMeterMetadata").orElse(true);
     }
 
     @Override

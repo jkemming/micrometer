@@ -24,7 +24,10 @@ import java.util.function.Supplier;
  *
  * @author Johnny Lim
  * @since 1.1.8
+ * @deprecated Please use
+ * {@link io.micrometer.common.util.internal.logging.WarnThenDebugLogger} instead.
  */
+@Deprecated
 public class WarnThenDebugLogger {
 
     private final InternalLogger logger;

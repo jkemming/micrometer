@@ -25,11 +25,11 @@ import io.micrometer.appoptics.AppOpticsMeterRegistry;
 import io.micrometer.atlas.AtlasMeterRegistry;
 import io.micrometer.azuremonitor.AzureMonitorConfig;
 import io.micrometer.azuremonitor.AzureMonitorMeterRegistry;
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.instrument.Clock;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.logging.LoggingMeterRegistry;
 import io.micrometer.core.instrument.logging.LoggingRegistryConfig;
-import io.micrometer.core.lang.Nullable;
 import io.micrometer.datadog.DatadogConfig;
 import io.micrometer.datadog.DatadogMeterRegistry;
 import io.micrometer.dynatrace.DynatraceConfig;
@@ -410,8 +410,27 @@ public class SampleRegistries {
     public static AzureMonitorMeterRegistry azure(String apiKey) {
         return new AzureMonitorMeterRegistry(new AzureMonitorConfig() {
             @Override
-            public String instrumentationKey() {
-                return apiKey;
+            public String connectionString() {
+                return String.format("InstrumentationKey=%s", apiKey);
+            }
+
+            @Override
+            public String get(String key) {
+                return null;
+            }
+
+            @Override
+            public Duration step() {
+                return Duration.ofSeconds(10);
+            }
+        }, Clock.SYSTEM);
+    }
+
+    public static AzureMonitorMeterRegistry azureWithConnectionString(String connectionString) {
+        return new AzureMonitorMeterRegistry(new AzureMonitorConfig() {
+            @Override
+            public String connectionString() {
+                return connectionString;
             }
 
             @Override

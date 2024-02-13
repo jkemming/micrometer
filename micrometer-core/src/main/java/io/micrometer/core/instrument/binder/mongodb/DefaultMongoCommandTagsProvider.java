@@ -18,10 +18,10 @@ package io.micrometer.core.instrument.binder.mongodb;
 import com.mongodb.event.CommandEvent;
 import com.mongodb.event.CommandStartedEvent;
 import com.mongodb.event.CommandSucceededEvent;
+import io.micrometer.common.util.StringUtils;
+import io.micrometer.common.util.internal.logging.WarnThenDebugLogger;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Tags;
-import io.micrometer.core.instrument.util.StringUtils;
-import io.micrometer.core.util.internal.logging.WarnThenDebugLogger;
 import org.bson.BsonDocument;
 import org.bson.BsonString;
 import org.bson.BsonValue;
@@ -54,7 +54,7 @@ public class DefaultMongoCommandTagsProvider implements MongoCommandTagsProvider
 
     @Override
     public Iterable<Tag> commandTags(CommandEvent event) {
-        return Tags.of(Tag.of("command", event.getCommandName()),
+        return Tags.of(Tag.of("command", event.getCommandName()), Tag.of("database", event.getDatabaseName()),
                 Tag.of("collection", getAndRemoveCollectionNameForCommand(event)),
                 Tag.of("cluster.id",
                         event.getConnectionDescription().getConnectionId().getServerId().getClusterId().getValue()),

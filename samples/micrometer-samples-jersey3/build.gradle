@@ -5,9 +5,22 @@ plugins {
 dependencies {
     implementation project(":micrometer-core")
 
-    implementation 'org.glassfish.jersey.containers:jersey-container-jdk-http:3.+'
-    runtimeOnly 'org.glassfish.jersey.inject:jersey-hk2:3.+'
+    // Test sample project with SLFJ4 2.x / Logback 1.4; see gh-3415
+    runtimeOnly(libs.logback14) {
+        version {
+            strictly libs.logback14.get().version
+        }
+    }
+    testRuntimeOnly(libs.logback14) {
+        version {
+            strictly libs.logback14.get().version
+        }
+    }
 
-    testImplementation project(':micrometer-test')
-    testImplementation 'org.glassfish.jersey.test-framework.providers:jersey-test-framework-provider-jdk-http:3.+'
+    implementation libs.jersey3ContainerJdkHttp
+    runtimeOnly libs.jersey3Hk2
+
+    testImplementation libs.jersey3TestFrameworkJdkHttp
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core'
 }

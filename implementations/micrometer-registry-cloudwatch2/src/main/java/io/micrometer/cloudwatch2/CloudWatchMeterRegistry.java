@@ -15,13 +15,13 @@
  */
 package io.micrometer.cloudwatch2;
 
+import io.micrometer.common.lang.Nullable;
+import io.micrometer.common.util.StringUtils;
+import io.micrometer.common.util.internal.logging.WarnThenDebugLogger;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.*;
 import io.micrometer.core.instrument.step.StepMeterRegistry;
 import io.micrometer.core.instrument.util.NamedThreadFactory;
-import io.micrometer.core.instrument.util.StringUtils;
-import io.micrometer.core.lang.Nullable;
-import io.micrometer.core.util.internal.logging.WarnThenDebugLogger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.exception.AbortedException;
@@ -54,6 +54,9 @@ public class CloudWatchMeterRegistry extends StepMeterRegistry {
 
     private static final Map<String, StandardUnit> STANDARD_UNIT_BY_LOWERCASE_VALUE;
 
+    // https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_Dimension.html
+    private static final int MAX_DIMENSIONS_SIZE = 30;
+
     static {
         Map<String, StandardUnit> standardUnitByLowercaseValue = new HashMap<>();
         for (StandardUnit standardUnit : StandardUnit.values()) {
@@ -70,8 +73,10 @@ public class CloudWatchMeterRegistry extends StepMeterRegistry {
 
     private final Logger logger = LoggerFactory.getLogger(CloudWatchMeterRegistry.class);
 
-    private static final WarnThenDebugLogger warnThenDebugLogger = new WarnThenDebugLogger(
+    private static final WarnThenDebugLogger blankTagValueLogger = new WarnThenDebugLogger(
             CloudWatchMeterRegistry.class);
+
+    private static final WarnThenDebugLogger tooManyTagsLogger = new WarnThenDebugLogger(CloudWatchMeterRegistry.class);
 
     public CloudWatchMeterRegistry(CloudWatchConfig config, Clock clock, CloudWatchAsyncClient cloudWatchAsyncClient) {
         this(config, clock, cloudWatchAsyncClient, new NamedThreadFactory("cloudwatch-metrics-publisher"));
@@ -124,7 +129,8 @@ public class CloudWatchMeterRegistry extends StepMeterRegistry {
                 }
             }
             else {
-                logger.debug("published metric with namespace:{}", putMetricDataRequest.namespace());
+                logger.debug("published {} metrics with namespace:{}", metricData.size(),
+                        putMetricDataRequest.namespace());
             }
             latch.countDown();
         });
@@ -271,6 +277,11 @@ public class CloudWatchMeterRegistry extends StepMeterRegistry {
             }
 
             List<Tag> tags = id.getConventionTags(config().namingConvention());
+            if (tags.size() > MAX_DIMENSIONS_SIZE) {
+                tooManyTagsLogger.log(() -> "Meter " + id.getName() + " has more tags (" + tags.size()
+                        + ") than the max supported by CloudWatch (" + MAX_DIMENSIONS_SIZE
+                        + "). Some tags will be dropped.");
+            }
             return MetricDatum.builder()
                 .storageResolution(config.highResolution() ? 1 : 60)
                 .metricName(getMetricName(id, suffix))
@@ -299,13 +310,14 @@ public class CloudWatchMeterRegistry extends StepMeterRegistry {
         private List<Dimension> toDimensions(List<Tag> tags) {
             return tags.stream()
                 .filter(this::isAcceptableTag)
+                .limit(MAX_DIMENSIONS_SIZE)
                 .map(tag -> Dimension.builder().name(tag.getKey()).value(tag.getValue()).build())
                 .collect(toList());
         }
 
         private boolean isAcceptableTag(Tag tag) {
             if (StringUtils.isBlank(tag.getValue())) {
-                warnThenDebugLogger
+                blankTagValueLogger
                     .log(() -> "Dropping a tag with key '" + tag.getKey() + "' because its value is blank.");
                 return false;
             }

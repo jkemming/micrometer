@@ -15,26 +15,29 @@
  */
 package io.micrometer.core.instrument.push;
 
+import io.micrometer.common.lang.Nullable;
+import io.micrometer.common.util.internal.logging.InternalLogger;
+import io.micrometer.common.util.internal.logging.InternalLoggerFactory;
 import io.micrometer.core.instrument.Clock;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.util.TimeUtils;
-import io.micrometer.core.lang.Nullable;
-import io.micrometer.core.util.internal.logging.InternalLogger;
-import io.micrometer.core.util.internal.logging.InternalLoggerFactory;
 
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Random;
+import java.util.concurrent.*;
 
 public abstract class PushMeterRegistry extends MeterRegistry {
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(PushMeterRegistry.class);
 
+    // Schedule publishing in the beginning X percent of the step to avoid spill-over into
+    // the next step.
+    private static final double PERCENT_RANGE_OF_RANDOM_PUBLISHING_OFFSET = 0.8;
+
     private final PushRegistryConfig config;
 
-    private final AtomicBoolean publishing = new AtomicBoolean(false);
+    private final Semaphore publishingSemaphore = new Semaphore(1);
+
+    private long lastScheduledPublishStartTime = 0L;
 
     @Nullable
     private ScheduledExecutorService scheduledExecutorService;
@@ -50,11 +53,13 @@ public abstract class PushMeterRegistry extends MeterRegistry {
     protected abstract void publish();
 
     /**
-     * Catch uncaught exceptions thrown from {@link #publish()}.
+     * Catch uncaught exceptions thrown from {@link #publish()}. Skip publishing if
+     * another call to this method is already in progress.
      */
     // VisibleForTesting
-    void publishSafely() {
-        if (this.publishing.compareAndSet(false, true)) {
+    void publishSafelyOrSkipIfInProgress() {
+        if (this.publishingSemaphore.tryAcquire()) {
+            this.lastScheduledPublishStartTime = clock.wallTime();
             try {
                 publish();
             }
@@ -63,7 +68,7 @@ public abstract class PushMeterRegistry extends MeterRegistry {
                         e);
             }
             finally {
-                this.publishing.set(false);
+                this.publishingSemaphore.release();
             }
         }
         else {
@@ -77,7 +82,16 @@ public abstract class PushMeterRegistry extends MeterRegistry {
      * @since 1.11.0
      */
     protected boolean isPublishing() {
-        return publishing.get();
+        return publishingSemaphore.availablePermits() == 0;
+    }
+
+    /**
+     * Returns the time, in milliseconds, when the last scheduled publish was started by
+     * {@link PushMeterRegistry#publishSafelyOrSkipIfInProgress()}.
+     * @since 1.11.1
+     */
+    protected long getLastScheduledPublishStartTime() {
+        return lastScheduledPublishStartTime;
     }
 
     /**
@@ -97,11 +111,10 @@ public abstract class PushMeterRegistry extends MeterRegistry {
                     + TimeUtils.format(config.step()));
 
             scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(threadFactory);
-            // time publication to happen just after StepValue finishes the step
             long stepMillis = config.step().toMillis();
-            long initialDelayMillis = stepMillis - (clock.wallTime() % stepMillis) + 1;
-            scheduledExecutorService.scheduleAtFixedRate(this::publishSafely, initialDelayMillis, stepMillis,
-                    TimeUnit.MILLISECONDS);
+            long initialDelayMillis = calculateInitialDelay();
+            scheduledExecutorService.scheduleAtFixedRate(this::publishSafelyOrSkipIfInProgress, initialDelayMillis,
+                    stepMillis, TimeUnit.MILLISECONDS);
         }
     }
 
@@ -116,9 +129,39 @@ public abstract class PushMeterRegistry extends MeterRegistry {
     public void close() {
         stop();
         if (config.enabled() && !isClosed()) {
-            publishSafely();
+            // do a final publish on close or wait for the in progress scheduled publish
+            publishSafelyOrSkipIfInProgress();
+            waitForInProgressScheduledPublish();
         }
         super.close();
+    }
+
+    /**
+     * Wait until scheduled publishing by {@link PushMeterRegistry} completes, if in
+     * progress.
+     * @since 1.11.6
+     */
+    protected void waitForInProgressScheduledPublish() {
+        try {
+            // block until in progress publish finishes
+            publishingSemaphore.acquire();
+            publishingSemaphore.release();
+        }
+        catch (InterruptedException e) {
+            logger.warn("Interrupted while waiting for publish on close to finish", e);
+        }
+    }
+
+    // VisibleForTesting
+    long calculateInitialDelay() {
+        long stepMillis = config.step().toMillis();
+        Random random = new Random();
+        // in range of [0, X% of step - 2)
+        long randomOffsetWithinStep = Math.max(0,
+                (long) (stepMillis * random.nextDouble() * PERCENT_RANGE_OF_RANDOM_PUBLISHING_OFFSET) - 2);
+        long offsetToStartOfNextStep = stepMillis - (clock.wallTime() % stepMillis);
+        // at least 2ms into step, so it is after StepMeterRegistry's meterPollingService
+        return offsetToStartOfNextStep + 2 + randomOffsetWithinStep;
     }
 
 }

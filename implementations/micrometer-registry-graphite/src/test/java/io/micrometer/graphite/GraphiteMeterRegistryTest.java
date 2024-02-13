@@ -15,8 +15,8 @@
  */
 package io.micrometer.graphite;
 
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.instrument.MockClock;
-import io.micrometer.core.lang.Nullable;
 import io.netty.channel.ChannelOption;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
@@ -29,7 +29,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GraphiteMeterRegistryTest {
 
@@ -109,7 +108,7 @@ class GraphiteMeterRegistryTest {
             })
             .block(Duration.ofSeconds(10));
 
-        assertTrue(receiveLatch.await(10, TimeUnit.SECONDS), "line was received");
+        assertThat(receiveLatch.await(10, TimeUnit.SECONDS)).as("line was received").isTrue();
         server.dispose();
     }
 
@@ -176,7 +175,7 @@ class GraphiteMeterRegistryTest {
             })
             .block(Duration.ofSeconds(10));
 
-        assertTrue(receiveLatch.await(10, TimeUnit.SECONDS), "line was received");
+        assertThat(receiveLatch.await(10, TimeUnit.SECONDS)).as("line was received").isTrue();
         server.dispose();
     }
 

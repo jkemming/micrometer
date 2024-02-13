@@ -55,6 +55,15 @@ class TagsTest {
     }
 
     @Test
+    void spliterator() {
+        Tags tags = Tags.of("k1", "v1", "k2", "v2", "k3", "v4");
+        Spliterator<Tag> spliterator = tags.spliterator();
+        assertThat(spliterator).hasCharacteristics(Spliterator.IMMUTABLE, Spliterator.ORDERED, Spliterator.SORTED,
+                Spliterator.DISTINCT);
+        assertThat(spliterator.getExactSizeIfKnown()).isEqualTo(3);
+    }
+
+    @Test
     void tagsHashCode() {
         Tags tags = Tags.of(Tag.of("k1", "v1"), Tag.of("k1", "v1"), Tag.of("k2", "v2"));
         Tags tags2 = Tags.of(Tag.of("k1", "v1"), Tag.of("k2", "v2"));
@@ -329,26 +338,7 @@ class TagsTest {
     @Issue("#3313")
     @DisabledIfSystemProperty(named = "java.vm.name", matches = JAVA_VM_NAME_J9_REGEX,
             disabledReason = "Sun ThreadMXBean with allocation counter not available")
-    @EnabledForJreRange(max = JRE.JAVA_18)
     void andEmptyDoesNotAllocate() {
-        andEmptyDoesNotAllocate(0);
-    }
-
-    // See https://github.com/micrometer-metrics/micrometer/issues/3436
-    @Test
-    @Issue("#3313")
-    @DisabledIfSystemProperty(named = "java.vm.name", matches = JAVA_VM_NAME_J9_REGEX,
-            disabledReason = "Sun ThreadMXBean with allocation counter not available")
-    @EnabledIf("java19")
-    void andEmptyDoesNotAllocateOnJava19() {
-        andEmptyDoesNotAllocate(16);
-    }
-
-    static boolean java19() {
-        return "19".equals(System.getProperty("java.version"));
-    }
-
-    private void andEmptyDoesNotAllocate(int expectedAllocatedBytes) {
         ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
         long currentThreadId = Thread.currentThread().getId();
         Tags tags = Tags.of("a", "b");
@@ -359,29 +349,14 @@ class TagsTest {
         long allocatedBytes = threadMXBean.getThreadAllocatedBytes(currentThreadId) - allocatedBytesBefore;
 
         assertThat(combined).isEqualTo(tags);
-        assertThat(allocatedBytes).isEqualTo(expectedAllocatedBytes);
+        assertThat(allocatedBytes).isEqualTo(0);
     }
 
     @Test
     @Issue("#3313")
     @DisabledIfSystemProperty(named = "java.vm.name", matches = JAVA_VM_NAME_J9_REGEX,
             disabledReason = "Sun ThreadMXBean with allocation counter not available")
-    @EnabledForJreRange(max = JRE.JAVA_18)
     void ofEmptyDoesNotAllocate() {
-        ofEmptyDoesNotAllocate(0);
-    }
-
-    // See https://github.com/micrometer-metrics/micrometer/issues/3436
-    @Test
-    @Issue("#3313")
-    @DisabledIfSystemProperty(named = "java.vm.name", matches = JAVA_VM_NAME_J9_REGEX,
-            disabledReason = "Sun ThreadMXBean with allocation counter not available")
-    @EnabledIf("java19")
-    void ofEmptyDoesNotAllocateOnJava19() {
-        ofEmptyDoesNotAllocate(16);
-    }
-
-    private void ofEmptyDoesNotAllocate(int expectedAllocatedBytes) {
         ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
         long currentThreadId = Thread.currentThread().getId();
         Tags extraTags = Tags.empty();
@@ -391,7 +366,7 @@ class TagsTest {
         long allocatedBytes = threadMXBean.getThreadAllocatedBytes(currentThreadId) - allocatedBytesBefore;
 
         assertThat(of).isEqualTo(Tags.empty());
-        assertThat(allocatedBytes).isEqualTo(expectedAllocatedBytes);
+        assertThat(allocatedBytes).isEqualTo(0);
     }
 
     private void assertTags(Tags tags, String... keyValues) {

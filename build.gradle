@@ -1,7 +1,6 @@
 buildscript {
-    dependencyLocking {
-        lockAllConfigurations()
-    }
+    ext.javaLanguageVersion = JavaLanguageVersion.of(JavaVersion.current().isJava11Compatible() ? JavaVersion.current().getMajorVersion() : 17)
+    ext.javaTargetVersion = JavaVersion.VERSION_1_8
 
     repositories {
         mavenCentral()
@@ -9,24 +8,41 @@ buildscript {
     }
 
     dependencies {
-        classpath 'gradle.plugin.com.hierynomus.gradle.plugins:license-gradle-plugin:0.16.1'
-        classpath 'com.netflix.nebula:nebula-release-plugin:17.1.0'
-        classpath 'com.netflix.nebula:nebula-publishing-plugin:20.1.0'
-        classpath 'com.netflix.nebula:nebula-project-plugin:10.1.2'
-        classpath 'io.spring.nohttp:nohttp-gradle:0.0.11'
-        classpath 'io.github.gradle-nexus:publish-plugin:1.3.0'
-        classpath 'me.champeau.gradle:japicmp-gradle-plugin:0.4.1'
-        classpath 'de.undercouch:gradle-download-task:5.2.1'
-        classpath 'io.spring.javaformat:spring-javaformat-gradle-plugin:0.0.39'
+        classpath libs.plugin.license
+        classpath libs.plugin.nebulaRelease
+        classpath libs.plugin.nebulaPublishing
+        classpath libs.plugin.nebulaProject
+        classpath libs.plugin.nebulaInfo
+        classpath libs.plugin.noHttp
+        classpath libs.plugin.nexusPublish
+        classpath libs.plugin.javaformat
+        classpath libs.plugin.japicmp
+        classpath libs.plugin.downloadTask
+        classpath libs.plugin.spotless
+        classpath libs.plugin.bnd
 
         constraints {
-            classpath('org.ow2.asm:asm:7.3.1') {
+            classpath(libs.asmForPlugins) {
                 because 'Supports modern JDKs'
             }
         }
     }
 
     configurations.classpath.resolutionStrategy.cacheDynamicVersionsFor 0, 'minutes'
+}
+
+// Hacks because of Antora's clone/checkout/worktrees behavior
+// Antora uses shallow-clone and worktrees to check out branches/tags.
+if (project.hasProperty('antora')) {
+    'git fetch --unshallow --all --tags'.execute().text // Antora shallow-clones so there is no history (we need commit history to find the last tag in the tree)
+    String ref = 'git rev-parse --abbrev-ref HEAD'.execute().text.trim()
+    if (ref == 'HEAD') { // if Antora checks out a tag instead of a branch
+        String tag = 'git tag --points-at HEAD'.execute().text.trim() // jgit is not able to figure out tags in Antora's worktree
+        if (tag) {
+            println "Found release tag: $tag, using it as release.version"
+            ext['release.version'] = tag.substring(1)
+        }
+    }
 }
 
 // TODO: remove this hack, see: https://github.com/nebula-plugins/nebula-release-plugin/issues/213
@@ -47,9 +63,10 @@ allprojects {
 subprojects {
     apply plugin: 'signing'
     apply plugin: 'io.spring.javaformat'
+    apply plugin: 'com.diffplug.spotless'
 
     if (project.name != 'micrometer-bom') {
-        if (project.name.contains('samples') || project.name.contains('benchmarks')) {
+        if ((project.name.contains('samples') && !project.name.contains('kotlin')) || project.name.contains('benchmarks')) {
             apply plugin: 'java'
         } else {
             apply plugin: 'java-library'
@@ -68,14 +85,20 @@ subprojects {
             registerFeature('optional') {
                 usingSourceSet(sourceSets.main)
             }
+
+            toolchain {
+                languageVersion = javaLanguageVersion
+                sourceCompatibility = javaTargetVersion
+                targetCompatibility = javaTargetVersion
+            }
         }
 
         // All projects use optional annotations, but since we don't expose them downstream we would
         // have to add the dependency in every project, which is tedious so just do it here.
         dependencies {
             // JSR-305 only used for non-required meta-annotations
-            optionalApi "com.google.code.findbugs:jsr305:latest.release"
-            checkstyle("io.spring.javaformat:spring-javaformat-checkstyle:latest.release")
+            optionalApi libs.jsr305
+            checkstyle libs.spring.javaformatCheckstyle
         }
 
         tasks {
@@ -83,20 +106,24 @@ subprojects {
                 options.encoding = 'UTF-8'
                 options.compilerArgs << '-Xlint:unchecked' << '-Xlint:deprecation'
 
-                sourceCompatibility = JavaVersion.VERSION_1_8
-                targetCompatibility = JavaVersion.VERSION_1_8
+                sourceCompatibility = javaTargetVersion
+                targetCompatibility = javaTargetVersion
 
                 // ensure Java 8 baseline is enforced for main source
-                if (JavaVersion.current().isJava9Compatible()) {
-                    options.release = 8
+                options.release = 8
+
+                doLast {
+                    task -> logger.info("Compiling with " + task.javaCompiler.get().executablePath)
                 }
             }
             compileTestJava {
                 options.encoding = 'UTF-8'
                 options.compilerArgs << '-Xlint:unchecked' << '-Xlint:deprecation'
-                sourceCompatibility = JavaVersion.VERSION_1_8
-                targetCompatibility = JavaVersion.VERSION_1_8
+
+                sourceCompatibility = JavaVersion.VERSION_11
+                targetCompatibility = JavaVersion.VERSION_11
             }
+
 
             javadoc {
                 if (project.name.contains('samples')) {
@@ -118,6 +145,7 @@ subprojects {
             runtimeClasspath {
                 metaInf {
                     [
+                            'Bnd-LastModified',
                             'Build-Date',
                             'Build-Date-UTC',
                             'Built-By',
@@ -181,11 +209,14 @@ subprojects {
             exclude '**/*.json' // comments not supported
         }
 
+        spotless {
+            kotlin {
+                ktlint().editorConfigOverride(['ktlint_standard_no-wildcard-imports': 'disabled'])
+            }
+        }
+
         // Publish resolved versions.
         plugins.withId('maven-publish') {
-            sourceCompatibility = JavaVersion.VERSION_1_8
-            targetCompatibility = JavaVersion.VERSION_1_8
-
             publishing {
                 publications {
                     nebula(MavenPublication) {
@@ -250,21 +281,6 @@ subprojects {
         }
     }
 
-    dependencyLocking {
-        lockAllConfigurations()
-    }
-
-    tasks.register('resolveAndLockAll') {
-        description = 'Resolves dependencies of all configurations and writes them into the lock file.'
-        outputs.upToDateWhen { false }
-        doFirst {
-            assert gradle.startParameter.writeDependencyLocks || gradle.startParameter.lockedDependenciesToUpdate: 'Execute resolveAndLockAll --write-locks or --update-locks <dependencies>'
-        }
-        doLast {
-            project.configurations.findAll { it.canBeResolved }*.resolve()
-        }
-    }
-
     tasks.register('downloadDependencies') {
         outputs.upToDateWhen { false }
         doLast {
@@ -272,7 +288,8 @@ subprojects {
         }
     }
 
-    if (!['samples', 'benchmarks'].find { project.name.contains(it) }) {
+    // Do not publish some modules
+    if (!['samples', 'benchmarks', 'micrometer-osgi-test'].find { project.name.contains(it) }) {
         apply plugin: 'com.netflix.nebula.maven-publish'
         apply plugin: 'com.netflix.nebula.maven-manifest'
         apply plugin: 'com.netflix.nebula.maven-developer'
@@ -285,70 +302,97 @@ subprojects {
         apply plugin: 'com.netflix.nebula.project'
 
         if (project.name != 'micrometer-bom') {
+            apply plugin: 'biz.aQute.bnd.builder'
+
             jar {
                 manifest.attributes.put('Automatic-Module-Name', project.name.replace('-', '.'))
                 metaInf {
                     from "$rootDir/LICENSE"
                     from "$rootDir/NOTICE"
                 }
+
+                bundle {
+                    // workaround for multi-version JARs
+                    //  see https://github.com/bndtools/bnd/issues/2227
+                    bnd '''\
+                        -fixupmessages: '^Classes found in the wrong directory: .*'
+                        -exportcontents: io.micrometer.*
+                        '''.stripIndent()
+                }
             }
 
-            apply plugin: 'me.champeau.gradle.japicmp'
-            apply plugin: 'de.undercouch.download'
+            task testModules(type: Exec) {
+                dependsOn jar
+                String executablePath = javaToolchains.launcherFor { languageVersion = javaLanguageVersion }.get().executablePath
+                commandLine "$executablePath", '-p', "$jar.archivePath", '--list-modules'
+                standardOutput = new ByteArrayOutputStream()
+                ignoreExitValue = true
 
-            task downloadBaseline(type: Download) {
-                onlyIf {
-                    if (project.gradle.startParameter.isOffline()) {
-                        println 'Offline: skipping downloading of baseline and JAPICMP'
-                        return false
-                    } else if (compatibleVersion == 'SKIP') {
-                        println 'SKIP: Instructed to skip the baseline comparison'
-                        return false
-                    } else {
-                        println "Will download and perform baseline comparison with ${compatibleVersion}"
-                        return true
+                doLast {
+                    if (executionResult.get().getExitValue() != 0) {
+                        throw new GradleException("Command finished with non-zero exit value ${executionResult.get().getExitValue()}:\n$standardOutput")
                     }
                 }
+            }
 
-                onlyIfNewer true
-                compress true
-                String rootUrl
-                if (compatibleVersion.contains('-M') || compatibleVersion.contains('-RC')) {
-                    rootUrl = 'https://repo.spring.io/milestone/'
-                } else if (compatibleVersion.contains('-SNAPSHOT')) {
-                    rootUrl = 'https://repo.spring.io/snapshot/'
-                } else {
-                    rootUrl = repositories.mavenCentral().url
+            check.dependsOn("testModules")
+
+            if (!(project.name in ['micrometer-jakarta9', 'micrometer-java11'])) { // add projects here that do not exist in the previous minor so should be excluded from japicmp
+                apply plugin: 'me.champeau.gradle.japicmp'
+                apply plugin: 'de.undercouch.download'
+
+                task downloadBaseline(type: Download) {
+                    onlyIf {
+                        if (project.gradle.startParameter.isOffline()) {
+                            println 'Offline: skipping downloading of baseline and JAPICMP'
+                            return false
+                        } else if (compatibleVersion == 'SKIP') {
+                            println 'SKIP: Instructed to skip the baseline comparison'
+                            return false
+                        } else {
+                            println "Will download and perform baseline comparison with ${compatibleVersion}"
+                            return true
+                        }
+                    }
+
+                    onlyIfNewer true
+                    compress true
+                    String rootUrl
+                    if (compatibleVersion.contains('-M') || compatibleVersion.contains('-RC')) {
+                        rootUrl = 'https://repo.spring.io/milestone/'
+                    } else if (compatibleVersion.contains('-SNAPSHOT') ) {
+                        rootUrl = 'https://repo.spring.io/snapshot/'
+                    } else {
+                        rootUrl = repositories.mavenCentral().url
+                    }
+
+                    src "${rootUrl}io/micrometer/${project.name}/${compatibleVersion}/${project.name}-${compatibleVersion}.jar"
+                    dest "${buildDir}/baselineLibs/${project.name}-${compatibleVersion}.jar"
                 }
 
-                src "${rootUrl}io/micrometer/${project.name}/${compatibleVersion}/${project.name}-${compatibleVersion}.jar"
-                dest "${buildDir}/baselineLibs/${project.name}-${compatibleVersion}.jar"
+                task japicmp(type: me.champeau.gradle.japicmp.JapicmpTask) {
+                    oldClasspath.from(files("${buildDir}/baselineLibs/${project.name}-${compatibleVersion}.jar"))
+                    newClasspath.from(files(jar.archiveFile, project(":${project.name}").jar))
+                    onlyBinaryIncompatibleModified = true
+                    failOnModification = true
+                    failOnSourceIncompatibility = true
+                    txtOutputFile = file("${project.buildDir}/reports/japi.txt")
+                    ignoreMissingClasses = true
+                    includeSynthetic = true
+
+                    // TODO remove MetricsDSLContext from excludes in 1.14 when comparing against 1.13
+                    classExcludes = [ 'io.micrometer.core.instrument.binder.db.MetricsDSLContext' ]
+                    compatibilityChangeExcludes = [ "METHOD_NEW_DEFAULT" ]
+
+                    packageExcludes = ['io.micrometer.shaded.*', 'io.micrometer.statsd.internal']
+
+                    onlyIf { compatibleVersion != 'SKIP' }
+                }
+
+                tasks.japicmp.dependsOn(downloadBaseline)
+                tasks.japicmp.dependsOn(jar)
+                tasks.check.dependsOn(japicmp)
             }
-
-            task japicmp(type: me.champeau.gradle.japicmp.JapicmpTask) {
-                oldClasspath.from(files("${buildDir}/baselineLibs/${project.name}-${compatibleVersion}.jar"))
-                newClasspath.from(files(jar.archiveFile, project(":${project.name}").jar))
-                onlyBinaryIncompatibleModified = true
-                failOnModification = true
-                failOnSourceIncompatibility = true
-                txtOutputFile = file("${project.buildDir}/reports/japi.txt")
-                ignoreMissingClasses = true
-                includeSynthetic = true
-
-                compatibilityChangeExcludes = [ "METHOD_NEW_DEFAULT" ]
-
-                packageExcludes = ['io.micrometer.shaded.*', 'io.micrometer.statsd.internal']
-
-                // For 1.9.x branch only.
-                classExcludes = ['io.micrometer.core.ipc.http.ReactorNettySender',
-                                 'io.micrometer.core.tck.RegistryResolver']
-
-                onlyIf { compatibleVersion != 'SKIP' }
-            }
-
-            tasks.japicmp.dependsOn(downloadBaseline)
-            tasks.japicmp.dependsOn(jar)
-            tasks.check.dependsOn(japicmp)
         }
 
         contacts {
@@ -380,12 +424,8 @@ nexusPublishing {
     }
 }
 
-task deleteLockFiles(type: Delete) {
-    delete fileTree(dir: '.', include: '**/*.lockfile')
-}
-
 wrapper {
-    gradleVersion = '8.3'
+    gradleVersion = '8.6'
 }
 
 defaultTasks 'build'

@@ -20,9 +20,14 @@ import org.apache.http.HttpHost;
 import org.apache.http.conn.routing.HttpRoute;
 import org.apache.http.protocol.HttpContext;
 
+@Deprecated
 class HttpContextUtils {
 
     static Tags generateTagsForRoute(HttpContext context) {
+        return Tags.of(generateTagStringsForRoute(context));
+    }
+
+    static String[] generateTagStringsForRoute(HttpContext context) {
         String targetScheme = "UNKNOWN";
         String targetHost = "UNKNOWN";
         String targetPort = "UNKNOWN";
@@ -33,7 +38,11 @@ class HttpContextUtils {
             targetHost = host.getHostName();
             targetPort = String.valueOf(host.getPort());
         }
-        return Tags.of("target.scheme", targetScheme, "target.host", targetHost, "target.port", targetPort);
+        return new String[] {
+                ApacheHttpClientObservationDocumentation.ApacheHttpClientKeyNames.TARGET_SCHEME.asString(),
+                targetScheme, ApacheHttpClientObservationDocumentation.ApacheHttpClientKeyNames.TARGET_HOST.asString(),
+                targetHost, ApacheHttpClientObservationDocumentation.ApacheHttpClientKeyNames.TARGET_PORT.asString(),
+                targetPort };
     }
 
 }

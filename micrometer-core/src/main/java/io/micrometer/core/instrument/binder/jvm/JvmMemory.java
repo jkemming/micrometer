@@ -15,7 +15,7 @@
  */
 package io.micrometer.core.instrument.binder.jvm;
 
-import io.micrometer.core.lang.Nullable;
+import io.micrometer.common.lang.Nullable;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryPoolMXBean;
@@ -37,11 +37,15 @@ class JvmMemory {
     }
 
     static boolean isConcurrentPhase(String cause, String name) {
-        return "No GC".equals(cause) || "Shenandoah Cycles".equals(name) || "ZGC Cycles".equals(name);
+        return "No GC".equals(cause) || "Shenandoah Cycles".equals(name) || "ZGC Cycles".equals(name)
+                || (name.startsWith("GPGC") && !name.endsWith("Pauses"));
     }
 
     static boolean isAllocationPool(String name) {
-        return name != null && (name.endsWith("Eden Space") || "Shenandoah".equals(name) || "ZHeap".equals(name)
+        return name != null && (name.endsWith("Eden Space") || "Shenandoah".equals(name) || "ZHeap".equals(name) // ZGC
+                                                                                                                 // non-generational
+                || "ZGC Young Generation".equals(name) // generational ZGC
+                || name.endsWith("New Gen") // Zing GPGC
                 || name.endsWith("nursery-allocate") || name.endsWith("-eden") // "balanced-eden"
                 || "JavaHeap".equals(name) // metronome
         );
@@ -49,9 +53,10 @@ class JvmMemory {
 
     static boolean isLongLivedPool(String name) {
         return name != null && (name.endsWith("Old Gen") || name.endsWith("Tenured Gen") || "Shenandoah".equals(name)
-                || "ZHeap".equals(name) || name.endsWith("balanced-old") || name.contains("tenured") // "tenured",
-                                                                                                     // "tenured-SOA",
-                                                                                                     // "tenured-LOA"
+                || "ZHeap".equals(name) // ZGC non-generational
+                || "ZGC Old Generation".equals(name) // generational ZGC
+                || name.endsWith("balanced-old") //
+                || name.contains("tenured") // "tenured", "tenured-SOA", "tenured-LOA"
                 || "JavaHeap".equals(name) // metronome
         );
     }

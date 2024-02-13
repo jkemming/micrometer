@@ -5,7 +5,18 @@ plugins {
 dependencies {
     implementation project(":micrometer-core")
     implementation project(":micrometer-registry-prometheus")
+    implementation project(":micrometer-jetty11")
 
-    implementation 'io.javalin:javalin:latest.release'
+    implementation libs.javalin
     implementation 'ch.qos.logback:logback-classic'
+}
+
+java {
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+compileJava {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+    options.release = 11
 }

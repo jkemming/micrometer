@@ -15,10 +15,12 @@
  */
 package io.micrometer.wavefront;
 
+import com.wavefront.sdk.common.clients.service.token.TokenService;
+import com.wavefront.sdk.common.clients.service.token.TokenService.Type;
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.instrument.config.validate.InvalidReason;
 import io.micrometer.core.instrument.config.validate.Validated;
 import io.micrometer.core.instrument.push.PushRegistryConfig;
-import io.micrometer.core.lang.Nullable;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -109,6 +111,19 @@ public interface WavefrontConfig extends PushRegistryConfig {
                 return "unknown";
             }
         });
+    }
+
+    /**
+     * API token type.
+     * @return API token type
+     * @since 1.12.0
+     */
+    default TokenService.Type apiTokenType() {
+        return getEnum(this, TokenService.Type.class, "apiTokenType")
+            .invalidateWhen(tokenType -> tokenType == Type.NO_TOKEN && WavefrontMeterRegistry.isDirectToApi(this),
+                    "must be set to something else whenever publishing directly to the Wavefront API",
+                    InvalidReason.MISSING)
+            .orElse(WavefrontMeterRegistry.isDirectToApi(this) ? Type.WAVEFRONT_API_TOKEN : Type.NO_TOKEN);
     }
 
     /**

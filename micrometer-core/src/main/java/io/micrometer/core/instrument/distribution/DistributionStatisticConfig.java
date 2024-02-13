@@ -15,8 +15,9 @@
  */
 package io.micrometer.core.instrument.distribution;
 
+import io.micrometer.common.lang.Nullable;
+import io.micrometer.core.instrument.config.InvalidConfigurationException;
 import io.micrometer.core.instrument.internal.Mergeable;
-import io.micrometer.core.lang.Nullable;
 
 import java.time.Duration;
 import java.util.NavigableSet;
@@ -214,7 +215,8 @@ public class DistributionStatisticConfig implements Mergeable<DistributionStatis
      * greater weight to recent samples (exception: histogram counts are cumulative for
      * those systems that expect cumulative histogram buckets). Samples are accumulated to
      * such statistics in ring buffers which rotate after this expiry, with a buffer
-     * length of {@link #bufferLength}.
+     * length of {@link #bufferLength}, hence complete expiry happens after this expiry *
+     * buffer length.
      * @return The amount of time samples are accumulated to a histogram before it is
      * reset and rotated.
      */
@@ -426,7 +428,8 @@ public class DistributionStatisticConfig implements Mergeable<DistributionStatis
          * greater weight to recent samples (exception: histogram counts are cumulative
          * for those systems that expect cumulative histogram buckets). Samples are
          * accumulated to such statistics in ring buffers which rotate after this expiry,
-         * with a buffer length of {@link #bufferLength}.
+         * with a buffer length of {@link #bufferLength}, hence complete expiry happens
+         * after this expiry * buffer length.
          * @param expiry The amount of time samples are accumulated to decaying
          * distribution statistics before they are reset and rotated.
          * @return This builder.
@@ -454,7 +457,50 @@ public class DistributionStatisticConfig implements Mergeable<DistributionStatis
          * @return A new immutable distribution configuration.
          */
         public DistributionStatisticConfig build() {
+            validate(config);
             return config;
+        }
+
+        private void validate(DistributionStatisticConfig distributionStatisticConfig) {
+            if (config.bufferLength != null && config.bufferLength <= 0) {
+                rejectConfig("bufferLength (" + config.bufferLength + ") must be greater than zero");
+            }
+
+            if (config.percentiles != null) {
+                for (double p : config.percentiles) {
+                    if (p < 0 || p > 1) {
+                        rejectConfig("percentiles must contain only the values between 0.0 and 1.0. " + "Found " + p);
+                    }
+                }
+            }
+
+            if (config.minimumExpectedValue != null && config.minimumExpectedValue <= 0) {
+                rejectConfig("minimumExpectedValue (" + config.minimumExpectedValue + ") must be greater than 0.");
+            }
+
+            if (config.maximumExpectedValue != null && config.maximumExpectedValue <= 0) {
+                rejectConfig("maximumExpectedValue (" + config.maximumExpectedValue + ") must be greater than 0.");
+            }
+
+            if ((config.minimumExpectedValue != null && config.maximumExpectedValue != null)
+                    && config.minimumExpectedValue > config.maximumExpectedValue) {
+                rejectConfig("maximumExpectedValue (" + config.maximumExpectedValue
+                        + ") must be equal to or greater than minimumExpectedValue (" + config.minimumExpectedValue
+                        + ").");
+            }
+
+            if (distributionStatisticConfig.getServiceLevelObjectiveBoundaries() != null) {
+                for (double slo : distributionStatisticConfig.getServiceLevelObjectiveBoundaries()) {
+                    if (slo <= 0) {
+                        rejectConfig("serviceLevelObjectiveBoundaries must contain only the values greater than 0. "
+                                + "Found " + slo);
+                    }
+                }
+            }
+        }
+
+        private static void rejectConfig(String msg) {
+            throw new InvalidConfigurationException("Invalid distribution configuration: " + msg);
         }
 
     }

@@ -15,51 +15,76 @@
  */
 package io.micrometer.core.instrument;
 
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.instrument.binder.jetty.JettyClientMetrics;
-import io.micrometer.core.lang.Nullable;
+import io.micrometer.core.instrument.binder.jetty.JettyClientObservationDocumentation;
+import io.micrometer.observation.docs.ObservationDocumentation;
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.util.BytesContentProvider;
-import org.junit.jupiter.api.BeforeEach;
 
 import java.net.URI;
 
-class JettyClientTimingInstrumentationVerificationTests extends HttpClientTimingInstrumentationVerificationTests {
+class JettyClientTimingInstrumentationVerificationTests
+        extends HttpClientTimingInstrumentationVerificationTests<HttpClient> {
 
     private static final String HEADER_URI_PATTERN = "URI_PATTERN";
-
-    private final HttpClient httpClient = new HttpClient();
 
     @Override
     protected String timerName() {
         return "jetty.client.requests";
     }
 
-    @BeforeEach
-    void setup() throws Exception {
-        httpClient.getRequestListeners()
-            .add(JettyClientMetrics
-                .builder(getRegistry(), result -> result.getRequest().getHeaders().get(HEADER_URI_PATTERN))
-                .build());
-        httpClient.start();
+    @Override
+    protected ObservationDocumentation observationDocumentation() {
+        return JettyClientObservationDocumentation.DEFAULT;
     }
 
     @Override
-    protected void sendHttpRequest(HttpMethod method, @Nullable byte[] body, URI baseUri, String templatedPath,
-            String... pathVariables) {
+    protected HttpClient clientInstrumentedWithMetrics() {
+        return createHttpClient(false);
+    }
+
+    @Nullable
+    @Override
+    protected HttpClient clientInstrumentedWithObservations() {
+        return createHttpClient(true);
+    }
+
+    @Override
+    protected void sendHttpRequest(HttpClient instrumentedClient, HttpMethod method, @Nullable byte[] body, URI baseUri,
+            String templatedPath, String... pathVariables) {
         try {
-            Request request = httpClient.newRequest(baseUri + substitutePathVariables(templatedPath, pathVariables))
+            Request request = instrumentedClient
+                .newRequest(baseUri + substitutePathVariables(templatedPath, pathVariables))
                 .method(method.name())
                 .header(HEADER_URI_PATTERN, templatedPath);
             if (body != null) {
                 request.content(new BytesContentProvider(body));
             }
             request.send();
-            httpClient.stop();
+            instrumentedClient.stop();
         }
         catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private HttpClient createHttpClient(boolean withObservationRegistry) {
+        HttpClient httpClient = new HttpClient();
+        JettyClientMetrics.Builder builder = JettyClientMetrics.builder(getRegistry(),
+                (request, result) -> request.getHeaders().get(HEADER_URI_PATTERN));
+        if (withObservationRegistry) {
+            builder.observationRegistry(getObservationRegistry());
+        }
+        httpClient.getRequestListeners().add(builder.build());
+        try {
+            httpClient.start();
+        }
+        catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        return httpClient;
     }
 
 }

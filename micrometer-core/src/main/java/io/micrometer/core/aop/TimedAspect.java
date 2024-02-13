@@ -15,11 +15,11 @@
  */
 package io.micrometer.core.aop;
 
+import io.micrometer.common.lang.NonNullApi;
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.annotation.Incubating;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.*;
-import io.micrometer.core.lang.NonNullApi;
-import io.micrometer.core.lang.Nullable;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
@@ -67,6 +67,10 @@ import java.util.function.Predicate;
  * }
  * </pre>
  *
+ * To add support for {@link MeterTag} annotations set the
+ * {@link MeterTagAnnotationHandler} via
+ * {@link TimedAspect#setMeterTagAnnotationHandler(MeterTagAnnotationHandler)}.
+ *
  * @author David J. M. Karlsen
  * @author Jon Schneider
  * @author Johnny Lim
@@ -97,6 +101,8 @@ public class TimedAspect {
     private final Function<ProceedingJoinPoint, Iterable<Tag>> tagsBasedOnJoinPoint;
 
     private final Predicate<ProceedingJoinPoint> shouldSkip;
+
+    private MeterTagAnnotationHandler meterTagAnnotationHandler;
 
     /**
      * Creates a {@code TimedAspect} instance with {@link Metrics#globalRegistry}.
@@ -232,18 +238,26 @@ public class TimedAspect {
     private void record(ProceedingJoinPoint pjp, Timed timed, String metricName, Timer.Sample sample,
             String exceptionClass) {
         try {
-            sample.stop(Timer.builder(metricName)
-                .description(timed.description().isEmpty() ? null : timed.description())
-                .tags(timed.extraTags())
-                .tags(EXCEPTION_TAG, exceptionClass)
-                .tags(tagsBasedOnJoinPoint.apply(pjp))
-                .publishPercentileHistogram(timed.histogram())
-                .publishPercentiles(timed.percentiles().length == 0 ? null : timed.percentiles())
-                .register(registry));
+            sample.stop(recordBuilder(pjp, timed, metricName, exceptionClass).register(registry));
         }
         catch (Exception e) {
             // ignoring on purpose
         }
+    }
+
+    private Timer.Builder recordBuilder(ProceedingJoinPoint pjp, Timed timed, String metricName,
+            String exceptionClass) {
+        Timer.Builder builder = Timer.builder(metricName)
+            .description(timed.description().isEmpty() ? null : timed.description())
+            .tags(timed.extraTags())
+            .tags(EXCEPTION_TAG, exceptionClass)
+            .tags(tagsBasedOnJoinPoint.apply(pjp))
+            .publishPercentileHistogram(timed.histogram())
+            .publishPercentiles(timed.percentiles().length == 0 ? null : timed.percentiles());
+        if (meterTagAnnotationHandler != null) {
+            meterTagAnnotationHandler.addAnnotatedParameters(builder, pjp);
+        }
+        return builder;
     }
 
     private String getExceptionTag(Throwable throwable) {
@@ -307,6 +321,14 @@ public class TimedAspect {
         catch (Exception e) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * Setting this enables support for {@link MeterTag}.
+     * @param meterTagAnnotationHandler meter tag annotation handler
+     */
+    public void setMeterTagAnnotationHandler(MeterTagAnnotationHandler meterTagAnnotationHandler) {
+        this.meterTagAnnotationHandler = meterTagAnnotationHandler;
     }
 
 }

@@ -5,9 +5,9 @@ pluginManagement {
 }
 
 plugins {
-    id 'com.gradle.enterprise' version '3.15'
-    id 'io.spring.ge.conventions' version '0.0.14'
-    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.7.0'
+    id 'com.gradle.enterprise' version '3.16.2'
+    id 'io.spring.ge.conventions' version '0.0.15'
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
 }
 
 rootProject.name = 'micrometer'
@@ -23,14 +23,14 @@ gradleEnterprise {
     server = 'https://ge.micrometer.io'
 }
 
-include 'micrometer-core'
+include 'micrometer-commons', 'micrometer-core', 'micrometer-observation'
 
-['core', 'boot2', 'boot2-reactive', 'spring-integration', 'hazelcast', 'hazelcast3', 'javalin', 'jersey3'].each { sample ->
+['core', 'boot2', 'boot2-reactive', 'spring-integration', 'hazelcast', 'hazelcast3', 'javalin', 'jersey3', 'jetty12', 'jooq', 'kotlin'].each { sample ->
     include "micrometer-samples-$sample"
     project(":micrometer-samples-$sample").projectDir = new File(rootProject.projectDir, "samples/micrometer-samples-$sample")
 }
 
-include 'micrometer-test'
+include 'micrometer-test', 'micrometer-observation-test'
 
 ['atlas', 'prometheus', 'datadog', 'elastic', 'ganglia', 'graphite', 'health', 'jmx', 'influx', 'otlp', 'statsd', 'new-relic', 'cloudwatch', 'cloudwatch2', 'signalfx', 'wavefront', 'dynatrace', 'azure-monitor', 'humio', 'appoptics', 'kairos', 'stackdriver', 'opentsdb'].each { sys ->
     include "micrometer-registry-$sys"
@@ -43,3 +43,8 @@ include 'micrometer-test'
 }
 
 include 'micrometer-bom'
+include 'micrometer-jakarta9'
+include 'micrometer-java11'
+include 'micrometer-jetty11'
+include 'micrometer-osgi-test'
+include 'docs'

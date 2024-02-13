@@ -14,7 +14,7 @@ Contributions come in various forms and are not limited to code changes.
 The Micrometer community benefits from contributions in all forms.
 
 For example, those with Micrometer knowledge and experience can contribute by: 
-* [Contributing documentation](https://github.com/micrometer-metrics/micrometer-docs/)
+* [Contributing documentation](https://github.com/micrometer-metrics/micrometer/tree/main/docs/)
 * Answering [Stackoverflow questions](https://stackoverflow.com/tags/micrometer)
 * Answering questions on the [Micrometer slack](https://slack.micrometer.io)
 * Share Micrometer knowledge in other ways (e.g. presentations, blogs)
@@ -32,7 +32,8 @@ You can use a Git client to clone the source code to your local machine.
 
 ## Building
 
-Micrometer requires JDK 8 or later to build.
+Micrometer targets Java 8 but requires JDK 11 or later to build.
+If you are not running Gradle with JDK 11 or later and Gradle cannot detect an existing JDK 17 installation, it will download one.
 
 The Gradle wrapper is provided and should be used for building with a consistent version of Gradle.
 

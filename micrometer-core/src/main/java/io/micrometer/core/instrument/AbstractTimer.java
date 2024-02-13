@@ -15,11 +15,12 @@
  */
 package io.micrometer.core.instrument;
 
+import io.micrometer.common.lang.Nullable;
+import io.micrometer.common.util.internal.logging.WarnThenDebugLogger;
 import io.micrometer.core.instrument.distribution.*;
 import io.micrometer.core.instrument.distribution.pause.ClockDriftPauseDetector;
 import io.micrometer.core.instrument.distribution.pause.NoPauseDetector;
 import io.micrometer.core.instrument.distribution.pause.PauseDetector;
-import io.micrometer.core.lang.Nullable;
 import org.LatencyUtils.IntervalEstimator;
 import org.LatencyUtils.SimplePauseDetector;
 import org.LatencyUtils.TimeCappedMovingAverageIntervalEstimator;
@@ -28,9 +29,15 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
+import java.util.function.DoubleSupplier;
+import java.util.function.IntSupplier;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 public abstract class AbstractTimer extends AbstractMeter implements Timer {
+
+    private static final WarnThenDebugLogger log = new WarnThenDebugLogger(AbstractTimer.class);
 
     private static final Map<PauseDetector, Object> pauseDetectorCache = new ConcurrentHashMap<>();
 
@@ -78,27 +85,51 @@ public abstract class AbstractTimer extends AbstractMeter implements Timer {
      */
     protected AbstractTimer(Id id, Clock clock, DistributionStatisticConfig distributionStatisticConfig,
             PauseDetector pauseDetector, TimeUnit baseTimeUnit, boolean supportsAggregablePercentiles) {
+        this(id, clock, pauseDetector, baseTimeUnit,
+                defaultHistogram(clock, distributionStatisticConfig, supportsAggregablePercentiles));
+    }
+
+    /**
+     * Creates a new timer.
+     * @param id The timer's name and tags.
+     * @param clock The clock used to measure latency.
+     * @param pauseDetector Compensation for coordinated omission.
+     * @param baseTimeUnit The time scale of this timer.
+     * @param histogram Histogram.
+     * @since 1.11.0
+     */
+    protected AbstractTimer(Id id, Clock clock, PauseDetector pauseDetector, TimeUnit baseTimeUnit,
+            Histogram histogram) {
         super(id);
         this.clock = clock;
         this.baseTimeUnit = baseTimeUnit;
-
         initPauseDetector(pauseDetector);
+        this.histogram = histogram;
+    }
 
+    /**
+     * Creates a default histogram.
+     * @param clock The clock used to measure latency.
+     * @param distributionStatisticConfig Configuration determining which distribution
+     * statistics are sent.
+     * @param supportsAggregablePercentiles Indicates whether the registry supports
+     * percentile approximations from histograms.
+     * @return a default histogram
+     * @since 1.11.0
+     */
+    protected static Histogram defaultHistogram(Clock clock, DistributionStatisticConfig distributionStatisticConfig,
+            boolean supportsAggregablePercentiles) {
         if (distributionStatisticConfig.isPublishingPercentiles()) {
             // hdr-based histogram
-            this.histogram = new TimeWindowPercentileHistogram(clock, distributionStatisticConfig,
-                    supportsAggregablePercentiles);
+            return new TimeWindowPercentileHistogram(clock, distributionStatisticConfig, supportsAggregablePercentiles);
         }
-        else if (distributionStatisticConfig.isPublishingHistogram()) {
+        if (distributionStatisticConfig.isPublishingHistogram()) {
             // fixed boundary histograms, which have a slightly better memory footprint
             // when we don't need Micrometer-computed percentiles
-            this.histogram = new TimeWindowFixedBoundaryHistogram(clock, distributionStatisticConfig,
+            return new TimeWindowFixedBoundaryHistogram(clock, distributionStatisticConfig,
                     supportsAggregablePercentiles);
         }
-        else {
-            // noop histogram
-            this.histogram = NoopHistogram.INSTANCE;
-        }
+        return NoopHistogram.INSTANCE;
     }
 
     private void initPauseDetector(PauseDetector pauseDetectorType) {
@@ -165,6 +196,54 @@ public abstract class AbstractTimer extends AbstractMeter implements Timer {
     }
 
     @Override
+    public boolean record(BooleanSupplier f) {
+        final long s = clock.monotonicTime();
+        try {
+            return f.getAsBoolean();
+        }
+        finally {
+            final long e = clock.monotonicTime();
+            record(e - s, TimeUnit.NANOSECONDS);
+        }
+    }
+
+    @Override
+    public int record(IntSupplier f) {
+        final long s = clock.monotonicTime();
+        try {
+            return f.getAsInt();
+        }
+        finally {
+            final long e = clock.monotonicTime();
+            record(e - s, TimeUnit.NANOSECONDS);
+        }
+    }
+
+    @Override
+    public long record(LongSupplier f) {
+        final long s = clock.monotonicTime();
+        try {
+            return f.getAsLong();
+        }
+        finally {
+            final long e = clock.monotonicTime();
+            record(e - s, TimeUnit.NANOSECONDS);
+        }
+    }
+
+    @Override
+    public double record(DoubleSupplier f) {
+        final long s = clock.monotonicTime();
+        try {
+            return f.getAsDouble();
+        }
+        finally {
+            final long e = clock.monotonicTime();
+            record(e - s, TimeUnit.NANOSECONDS);
+        }
+    }
+
+    @Override
     public void record(Runnable f) {
         final long s = clock.monotonicTime();
         try {
@@ -185,6 +264,9 @@ public abstract class AbstractTimer extends AbstractMeter implements Timer {
             if (intervalEstimator != null) {
                 ((IntervalEstimator) intervalEstimator).recordInterval(clock.monotonicTime());
             }
+        }
+        else {
+            log.log(() -> "'amount' should not be negative but was: " + amount);
         }
     }
 

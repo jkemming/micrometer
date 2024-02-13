@@ -5,30 +5,27 @@ executors:
     working_directory: ~/micrometer
     environment:
       GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx2048m -XX:+HeapDumpOnOutOfMemoryError"'
+    resource_class: medium+
     docker:
-      - image: cimg/openjdk:20.0.1
+      - image: cimg/openjdk:21.0.2
   circle-jdk17-executor:
     working_directory: ~/micrometer
     environment:
       GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx2048m -XX:+HeapDumpOnOutOfMemoryError"'
+    resource_class: medium+
     docker:
-      - image: cimg/openjdk:17.0.7
-  circle-jdk8-executor:
-    working_directory: ~/micrometer
-    environment:
-      GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx2048m -XX:+HeapDumpOnOutOfMemoryError"'
-    docker:
-      - image: cimg/openjdk:8.0.362
+      - image: cimg/openjdk:17.0.10
   circle-jdk11-executor:
     working_directory: ~/micrometer
     environment:
       GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx2048m -XX:+HeapDumpOnOutOfMemoryError"'
+    resource_class: medium+
     docker:
-      - image: cimg/openjdk:11.0.19
+      - image: cimg/openjdk:11.0.22
   machine-executor:
     working_directory: ~/micrometer
     machine:
-      image: ubuntu-2204:2023.04.2
+      image: ubuntu-2204:2024.01.1
 
 commands:
   gradlew-build:
@@ -69,11 +66,7 @@ jobs:
       - gradlew-build
       - run: ./gradlew shenandoahTest
       - run: ./gradlew zgcTest
-
-  build-jdk8:
-    executor: circle-jdk8-executor
-    steps:
-      - gradlew-build
+      - run: ./gradlew zgcGenerationalTest
 
   build-jdk11:
     executor: circle-jdk11-executor
@@ -97,7 +90,7 @@ jobs:
       - checkout
       - restore_cache:
           key: gradle-dependencies-{{ .Branch }}-{{ checksum "build.gradle" }}-{{ checksum ".circleci/config.yml" }}
-      - deploy:
+      - run:
           name: Deployment
           command: sh ./gradle/deploy.sh
 
@@ -106,14 +99,12 @@ workflows:
   build_prs_deploy_snapshots:
     jobs:
       - build
-      - build-jdk8
       - build-jdk11
       - build-jdk17
       - docker-tests
       - deploy:
           requires:
             - build
-            - build-jdk8
             - build-jdk11
             - build-jdk17
             - docker-tests
@@ -125,12 +116,6 @@ workflows:
   build_deploy_releases:
     jobs:
       - build:
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: /^v\d+\.\d+\.\d+(-(RC|M)\d+)?$/
-      - build-jdk8:
           filters:
             branches:
               ignore: /.*/
@@ -157,7 +142,6 @@ workflows:
       - deploy:
           requires:
             - build
-            - build-jdk8
             - build-jdk11
             - build-jdk17
             - docker-tests

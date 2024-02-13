@@ -15,6 +15,7 @@
  */
 package io.micrometer.core.instrument;
 
+import io.micrometer.common.lang.Nullable;
 import io.micrometer.core.annotation.Incubating;
 import io.micrometer.core.instrument.Meter.Id;
 import io.micrometer.core.instrument.config.MeterFilter;
@@ -28,14 +29,15 @@ import io.micrometer.core.instrument.search.MeterNotFoundException;
 import io.micrometer.core.instrument.search.RequiredSearch;
 import io.micrometer.core.instrument.search.Search;
 import io.micrometer.core.instrument.util.TimeUtils;
-import io.micrometer.core.lang.Nullable;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.*;
+import java.util.stream.Collectors;
 
 import static java.lang.String.format;
 import static java.util.Collections.emptyList;
@@ -56,8 +58,23 @@ import static java.util.Objects.requireNonNull;
  *
  * @author Jon Schneider
  * @author Johnny Lim
+ * @author Jonatan Ivanov
+ * @author Tommy Ludwig
+ * @author Marcin Grzejszczak
  */
 public abstract class MeterRegistry {
+
+    // @formatter:off
+    private static final EnumMap<TimeUnit, String> BASE_TIME_UNIT_STRING_CACHE = Arrays.stream(TimeUnit.values())
+        .collect(
+            Collectors.toMap(
+                Function.identity(),
+                (timeUnit) -> timeUnit.toString().toLowerCase(),
+                (k, v) -> { throw new IllegalStateException("Duplicate keys should not exist."); },
+                () -> new EnumMap<>(TimeUnit.class)
+            )
+        );
+    // @formatter:on
 
     protected final Clock clock;
 
@@ -92,6 +109,9 @@ public abstract class MeterRegistry {
     private final AtomicBoolean closed = new AtomicBoolean();
 
     private PauseDetector pauseDetector = new NoPauseDetector();
+
+    @Nullable
+    private HighCardinalityTagsDetector highCardinalityTagsDetector;
 
     /**
      * We'll use snake case as a general-purpose default for registries because it is the
@@ -280,7 +300,7 @@ public abstract class MeterRegistry {
     protected abstract DistributionStatisticConfig defaultHistogramConfig();
 
     private String getBaseTimeUnitStr() {
-        return getBaseTimeUnit().toString().toLowerCase();
+        return BASE_TIME_UNIT_STRING_CACHE.get(getBaseTimeUnit());
     }
 
     /**
@@ -843,6 +863,53 @@ public abstract class MeterRegistry {
             return pauseDetector;
         }
 
+        /**
+         * Creates and starts a new {@link HighCardinalityTagsDetector} for this registry.
+         * @return This configuration instance.
+         * @since 1.10.0
+         */
+        public Config withHighCardinalityTagsDetector() {
+            return withHighCardinalityTagsDetector(new HighCardinalityTagsDetector(MeterRegistry.this));
+        }
+
+        /**
+         * Creates and starts a new {@link HighCardinalityTagsDetector} for this registry.
+         * @param threshold The threshold to use to detect high cardinality tags (if the
+         * number of Meters with the same name is higher than this value, that's a high
+         * cardinality tag).
+         * @param delay The delay between the termination of one check and the
+         * commencement of the next.
+         * @return This configuration instance.
+         * @since 1.10.0
+         */
+        public Config withHighCardinalityTagsDetector(long threshold, Duration delay) {
+            return withHighCardinalityTagsDetector(
+                    new HighCardinalityTagsDetector(MeterRegistry.this, threshold, delay));
+        }
+
+        private Config withHighCardinalityTagsDetector(HighCardinalityTagsDetector newHighCardinalityTagsDetector) {
+            if (highCardinalityTagsDetector != null) {
+                highCardinalityTagsDetector.close();
+            }
+
+            highCardinalityTagsDetector = newHighCardinalityTagsDetector;
+            highCardinalityTagsDetector.start();
+
+            return this;
+        }
+
+        /**
+         * Returns the current {@link HighCardinalityTagsDetector}. You can "deregister"
+         * it by calling {@link HighCardinalityTagsDetector#close()} or register a new one
+         * by closing the previous one and creating a new one.
+         * @return The {@link HighCardinalityTagsDetector} that is currently in effect.
+         * @since 1.10.0
+         */
+        @Nullable
+        public HighCardinalityTagsDetector highCardinalityTagsDetector() {
+            return highCardinalityTagsDetector;
+        }
+
     }
 
     /**
@@ -1023,6 +1090,10 @@ public abstract class MeterRegistry {
                     meter.close();
                 }
             }
+        }
+
+        if (highCardinalityTagsDetector != null) {
+            highCardinalityTagsDetector.close();
         }
     }
 
